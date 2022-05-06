@@ -10,7 +10,7 @@ import Cocoa
 
 import Postbox
 import TelegramCore
-import SyncCore
+import InAppSettings
 import SwiftSignalKit
 import TGUIKit
 
@@ -115,7 +115,7 @@ public struct ChatHistoryCombinedInitialData {
     let autodownloadSettings: AutomaticMediaDownloadSettings
 }
 
-enum ChatHistoryViewUpdateType {
+enum ChatHistoryViewUpdateType : Equatable {
     case Initial(fadeIn: Bool)
     case Generic(type: ViewUpdateType)
 }
@@ -208,9 +208,13 @@ func chatHistoryViewForLocation(_ location: ChatHistoryLocation, context: Accoun
                             }
                         }
                     }
-
-                } else if let historyScrollState = (initialData?.chatInterfaceState as? ChatInterfaceState)?.historyScrollState {
-                    scrollPosition = .positionRestoration(index: historyScrollState.messageIndex, relativeOffset: CGFloat(historyScrollState.relativeOffset))
+                } else if let opaqueState = (initialData?.storedInterfaceState).flatMap(_internal_decodeStoredChatInterfaceState) {
+                    
+                    let interfaceState = ChatInterfaceState.parse(opaqueState, peerId: _chatLocation.peerId, context: context)
+                    
+                    if let historyScrollState = interfaceState?.historyScrollState {
+                        scrollPosition = .positionRestoration(index: historyScrollState.messageIndex, relativeOffset: CGFloat(historyScrollState.relativeOffset))
+                    }
                 } else {
                     if view.entries.isEmpty && (view.holeEarlier || view.holeLater) {
                         fadeIn = true
@@ -400,15 +404,15 @@ private func extractAdditionalData(view: MessageHistoryView, chatLocation: ChatL
                 cachedDataMessages = [messageId : messages]
             case let .preferencesEntry(key, value):
                 if key == PreferencesKeys.limitsConfiguration {
-                    limitsConfiguration = value as? LimitsConfiguration ?? LimitsConfiguration.defaultValue
+                    limitsConfiguration = value?.get(LimitsConfiguration.self) ?? .defaultValue
                 }
                 if key == ApplicationSpecificPreferencesKeys.autoplayMedia {
-                    autoplayMedia = value as? AutoplayMediaPreferences ?? AutoplayMediaPreferences.defaultSettings
+                    autoplayMedia = value?.get(AutoplayMediaPreferences.self) ?? .defaultSettings
                     
                 }
                 
                 if key == ApplicationSpecificPreferencesKeys.automaticMediaDownloadSettings {
-                    autodownloadSettings = value as? AutomaticMediaDownloadSettings ?? AutomaticMediaDownloadSettings.defaultSettings
+                    autodownloadSettings = value?.get(AutomaticMediaDownloadSettings.self) ?? .defaultSettings
                 }
             case let .totalUnreadState(unreadState):
                 if let combinedReadStates = view.fixedReadStates {
@@ -467,9 +471,9 @@ func fetchAndPreloadReplyThreadInfo(context: AccountContext, subject: ReplyThrea
     let message: Signal<ChatReplyThreadMessage, FetchChannelReplyThreadMessageError>
     switch subject {
     case let .channelPost(messageId):
-        message = fetchChannelReplyThreadMessage(account: context.account, messageId: messageId, atMessageId: atMessageId)
+        message = context.engine.messages.fetchChannelReplyThreadMessage(messageId: messageId, atMessageId: atMessageId)
     case let .groupMessage(messageId):
-        message = fetchChannelReplyThreadMessage(account: context.account, messageId: messageId, atMessageId: atMessageId)
+        message = context.engine.messages.fetchChannelReplyThreadMessage(messageId: messageId, atMessageId: atMessageId)
     }
     
     return message

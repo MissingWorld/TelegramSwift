@@ -8,7 +8,7 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+import Localization
 import Postbox
 import SwiftSignalKit
 import TGUIKit

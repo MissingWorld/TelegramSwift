@@ -1,8 +1,64 @@
 import Foundation
 import Postbox
 import TelegramCore
-import SyncCore
+
 import SwiftSignalKit
+
+
+public struct PresentationGroupCallRequestedVideo {
+    public enum Quality {
+        case thumbnail
+        case medium
+        case full
+    }
+
+    public struct SsrcGroup {
+        public var semantics: String
+        public var ssrcs: [UInt32]
+    }
+
+    public var audioSsrc: UInt32
+    public var endpointId: String
+    public var ssrcGroups: [SsrcGroup]
+    public var minQuality: Quality
+    public var maxQuality: Quality
+}
+
+public extension GroupCallParticipantsContext.Participant {
+    var videoEndpointId: String? {
+        return self.videoDescription?.endpointId
+    }
+
+    var presentationEndpointId: String? {
+        return self.presentationDescription?.endpointId
+    }
+}
+
+extension GroupCallParticipantsContext.Participant {
+    func requestedVideoChannel(minQuality: PresentationGroupCallRequestedVideo.Quality, maxQuality: PresentationGroupCallRequestedVideo.Quality) -> PresentationGroupCallRequestedVideo? {
+        guard let audioSsrc = self.ssrc else {
+            return nil
+        }
+        guard let videoDescription = self.videoDescription else {
+            return nil
+        }
+        return PresentationGroupCallRequestedVideo(audioSsrc: audioSsrc, endpointId: videoDescription.endpointId, ssrcGroups: videoDescription.ssrcGroups.map { group in
+            PresentationGroupCallRequestedVideo.SsrcGroup(semantics: group.semantics, ssrcs: group.ssrcs)
+        }, minQuality: minQuality, maxQuality: maxQuality)
+    }
+
+    func requestedPresentationVideoChannel(minQuality: PresentationGroupCallRequestedVideo.Quality, maxQuality: PresentationGroupCallRequestedVideo.Quality) -> PresentationGroupCallRequestedVideo? {
+        guard let audioSsrc = self.ssrc else {
+            return nil
+        }
+        guard let presentationDescription = self.presentationDescription else {
+            return nil
+        }
+        return PresentationGroupCallRequestedVideo(audioSsrc: audioSsrc, endpointId: presentationDescription.endpointId, ssrcGroups: presentationDescription.ssrcGroups.map { group in
+            PresentationGroupCallRequestedVideo.SsrcGroup(semantics: group.semantics, ssrcs: group.ssrcs)
+        }, minQuality: minQuality, maxQuality: maxQuality)
+    }
+}
 
 
 final class PresentationCallVideoView {
@@ -22,7 +78,9 @@ final class PresentationCallVideoView {
     public let setOnOrientationUpdated: (((Orientation, CGFloat) -> Void)?) -> Void
     public let setVideoContentMode:(CALayerContentsGravity)->Void
     public let setOnIsMirroredUpdated: (((Bool) -> Void)?) -> Void
-    
+    public let setIsPaused: (Bool) -> Void
+    public let renderToSize: (NSSize, Bool) -> Void
+
     public init(
         holder: AnyObject,
         view: NSView,
@@ -31,7 +89,9 @@ final class PresentationCallVideoView {
         getAspect: @escaping () -> CGFloat,
         setVideoContentMode:@escaping(CALayerContentsGravity)->Void,
         setOnOrientationUpdated: @escaping (((Orientation, CGFloat) -> Void)?) -> Void,
-        setOnIsMirroredUpdated: @escaping (((Bool) -> Void)?) -> Void
+        setOnIsMirroredUpdated: @escaping (((Bool) -> Void)?) -> Void,
+        setIsPaused: @escaping(Bool)->Void,
+        renderToSize: @escaping(NSSize, Bool) -> Void
     ) {
         self.holder = holder
         self.view = view
@@ -41,6 +101,8 @@ final class PresentationCallVideoView {
         self.setOnOrientationUpdated = setOnOrientationUpdated
         self.setOnIsMirroredUpdated = setOnIsMirroredUpdated
         self.setVideoContentMode = setVideoContentMode
+        self.setIsPaused = setIsPaused
+        self.renderToSize = renderToSize
     }
 }
 
@@ -116,6 +178,8 @@ public struct PresentationGroupCallState: Equatable {
     public var raisedHand: Bool
     public var scheduleTimestamp: Int32?
     public var subscribedToScheduled: Bool
+    public var isVideoEnabled: Bool
+    public var isStream: Bool
     public init(
         myPeerId: PeerId,
         networkState: NetworkState,
@@ -127,7 +191,9 @@ public struct PresentationGroupCallState: Equatable {
         title: String?,
         raisedHand: Bool,
         scheduleTimestamp: Int32?,
-        subscribedToScheduled: Bool
+        subscribedToScheduled: Bool,
+        isVideoEnabled: Bool,
+        isStream: Bool
     ) {
         self.myPeerId = myPeerId
         self.networkState = networkState
@@ -140,6 +206,8 @@ public struct PresentationGroupCallState: Equatable {
         self.raisedHand = raisedHand
         self.scheduleTimestamp = scheduleTimestamp
         self.subscribedToScheduled = subscribedToScheduled
+        self.isVideoEnabled = isVideoEnabled
+        self.isStream = isStream
     }
     
     var scheduleState: ScheduleState? {
@@ -183,10 +251,18 @@ struct PresentationGroupCallMembers: Equatable {
 }
 
 
-
+enum GroupCallVideoMode {
+    case video
+    case screencast
+}
 
 protocol PresentationGroupCall: class {
+    
+
+    
     var account: Account { get }
+    var engine: TelegramEngine { get }
+    var accountContext: AccountContext { get }
     var sharedContext: SharedAccountContext { get }
     var internalId: CallSessionInternalId { get }
     var peerId: PeerId { get }
@@ -201,8 +277,15 @@ protocol PresentationGroupCall: class {
     var invitedPeers: Signal<[PeerId], NoError> { get }
     var isMuted: Signal<Bool, NoError> { get }
     var summaryState: Signal<PresentationGroupCallSummaryState?, NoError> { get }
+    var callInfo: Signal<GroupCallInfo?, NoError> { get }
+    var stateVersion: Signal<Int, NoError> { get }
+    var isSpeaking: Signal<Bool, NoError> { get }
     
-    var outgoingVideoSource: Signal<[PeerId: UInt32], NoError> { get }
+    var isStream: Bool { get }
+
+    var mustStopSharing:(()->Void)? { get set }
+    var mustStopVideo:(()->Void)? { get set }
+
 //    var activeCall: CachedChannelData.ActiveCall? { get }
     var inviteLinks:Signal<GroupCallInviteLinks?, NoError> { get }
 
@@ -222,18 +305,19 @@ protocol PresentationGroupCall: class {
     func invitePeer(_ peerId: PeerId) -> Bool
     func updateDefaultParticipantsAreMuted(isMuted: Bool)
     
-    func setFullSizeVideo(ssrc: UInt32?)
-    func makeVideoView(source: UInt32, completion: @escaping (PresentationCallVideoView?) -> Void)
-    var incomingVideoSources: Signal<[PeerId: UInt32], NoError> { get }
-    
+    func setRequestedVideoList(items: [PresentationGroupCallRequestedVideo])
+    func makeVideoView(endpointId: String, videoMode: GroupCallVideoMode, completion: @escaping (PresentationCallVideoView?) -> Void)
     func requestVideo(deviceId: String)
     func disableVideo()
+    func requestScreencast(deviceId: String)
+    func disableScreencast()
+
     func loadMore()
 
     func joinAsSpeakerIfNeeded(_ joinHash: String)
     func reconnect(as peerId: PeerId) -> Void
     func updateTitle(_ title: String, force: Bool) -> Void
-    func setShouldBeRecording(_ shouldBeRecording: Bool, title: String?) -> Void
+    func setShouldBeRecording(_ shouldBeRecording: Bool, title: String?, videoOrientation: Bool?) -> Void
     func startScheduled()
     func toggleScheduledSubscription(_ subscribe: Bool)
 }

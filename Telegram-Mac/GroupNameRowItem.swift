@@ -9,7 +9,7 @@
 import Cocoa
 import TGUIKit
 import TelegramCore
-import SyncCore
+
 import Postbox
 
 class GroupNameRowItem: InputDataRowItem {
@@ -99,11 +99,16 @@ class GroupNameRowView : InputDataRowView {
                 if item.photo == nil {
                     item.pickPicture?(true)
                 } else {
-                    ContextMenu.show(items: [ContextMenuItem(L10n.peerCreatePeerContextUpdatePhoto, handler: {
+                    
+                    var items:[ContextMenuItem] = []
+                    items.append(ContextMenuItem(strings().peerCreatePeerContextUpdatePhoto, handler: {
                         item.pickPicture?(true)
-                    }), ContextMenuItem(L10n.peerCreatePeerContextRemovePhoto, handler: {
+                    }, itemImage: MenuAnimation.menu_shared_media.value))
+                    items.append(ContextSeparatorItem())
+                    items.append(ContextMenuItem(strings().peerCreatePeerContextRemovePhoto, handler: {
                         item.pickPicture?(false)
-                    })], view: photoView, event: event)
+                    }, itemMode: .destruct, itemImage: MenuAnimation.menu_delete.value))
+                    ContextMenu.show(items: items, view: photoView, event: event)
                 }
             }
         }
@@ -128,6 +133,9 @@ class GroupNameRowView : InputDataRowView {
 
         }
 
+    }
+    override var firstResponder: NSResponder? {
+        return self.textView.inputView
     }
     
     override func textViewTextDidChange(_ string: String) {

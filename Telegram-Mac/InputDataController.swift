@@ -9,7 +9,7 @@
 import Cocoa
 import TGUIKit
 import TelegramCore
-import SyncCore
+import HackUtils
 import SwiftSignalKit
 
 
@@ -21,7 +21,7 @@ public class InputDataModalController : ModalViewController {
     init(_ controller: InputDataController, modalInteractions: ModalInteractions? = nil, closeHandler: @escaping(@escaping()-> Void) -> Void = { $0() }, size: NSSize = NSMakeSize(380, 300)) {
         self.controller = controller
         self._modalInteractions = modalInteractions
-        self.controller._frameRect = NSMakeRect(0, 0, max(size.width, 330), size.height)
+        self.controller._frameRect = NSMakeRect(0, 0, max(size.width, 340), size.height)
         self.controller.prepareAllItems = true
         self.closeHandler = closeHandler
         super.init(frame: controller._frameRect)
@@ -133,10 +133,11 @@ public class InputDataModalController : ModalViewController {
         viewDidResized(frame.size)
     }
     
+    private var first: Bool = true
     public override func viewDidResized(_ size: NSSize) {
         super.viewDidResized(size)
         
-        updateSize(true)
+        updateSize(!first)
     }
     
     var dynamicSizeImpl:(()->Bool)? = nil
@@ -183,7 +184,8 @@ public class InputDataModalController : ModalViewController {
         
         controller.modalTransitionHandler = { [weak self] animated in
             if self?.dynamicSize == true {
-                self?.updateSize(animated)
+                self?.updateSize(animated && self?.first == false)
+                self?.first = false
             }
         }
     }
@@ -206,7 +208,7 @@ final class InputDataArguments {
 
 private let queue: Queue = Queue(name: "InputDataItemsQueue", qos: DispatchQoS.background)
 
-func prepareInputDataTransition(left:[AppearanceWrapperEntry<InputDataEntry>], right: [AppearanceWrapperEntry<InputDataEntry>], animated: Bool, searchState: TableSearchViewState?, initialSize:NSSize, arguments: InputDataArguments, onMainQueue: Bool) -> Signal<TableUpdateTransition, NoError> {
+func prepareInputDataTransition(left:[AppearanceWrapperEntry<InputDataEntry>], right: [AppearanceWrapperEntry<InputDataEntry>], animated: Bool, searchState: TableSearchViewState?, initialSize:NSSize, arguments: InputDataArguments, onMainQueue: Bool, animateEverything: Bool = false) -> Signal<TableUpdateTransition, NoError> {
     return Signal { subscriber in
         
         func makeItem(_ entry: InputDataEntry) -> TableRowItem {
@@ -251,7 +253,7 @@ func prepareInputDataTransition(left:[AppearanceWrapperEntry<InputDataEntry>], r
                 }
                 if !cancelled.with({ $0 }) {
                     applyQueue.async {
-                        subscriber.putNext(TableUpdateTransition(deleted: [], inserted: insertions, updated: updates, state: .none(nil), searchState: searchState))
+                        subscriber.putNext(TableUpdateTransition(deleted: [], inserted: insertions, updated: updates, state: .none(nil), animateVisibleOnly: !animateEverything, searchState: searchState))
                         subscriber.putCompletion()
                     }
                 }
@@ -266,7 +268,7 @@ func prepareInputDataTransition(left:[AppearanceWrapperEntry<InputDataEntry>], r
             })
             if !cancelled.with({ $0 }) {
                 applyQueue.async {
-                    subscriber.putNext(TableUpdateTransition(deleted: deleted, inserted: inserted, updated:updated, animated:animated, state: .none(nil), searchState: searchState))
+                    subscriber.putNext(TableUpdateTransition(deleted: deleted, inserted: inserted, updated:updated, animated:animated, state: .none(nil), animateVisibleOnly: !animateEverything, searchState: searchState))
                     subscriber.putCompletion()
                 }
             }
@@ -303,15 +305,15 @@ struct InputDataSignalValue {
     }
 }
 
-final class InputDataView : BackgroundView, AppearanceViewProtocol {
+final class InputDataView : BackgroundView {
     let tableView = TableView()
-    required override init(frame frameRect: NSRect) {
+    required init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         addSubview(tableView)
         tableView.frame = bounds
     }
     
-    func updateLocalizationAndTheme(theme: PresentationTheme) {
+    override func updateLocalizationAndTheme(theme: PresentationTheme) {
         tableView.updateLocalizationAndTheme(theme: theme)
     }
     
@@ -324,7 +326,14 @@ final class InputDataView : BackgroundView, AppearanceViewProtocol {
     }
     override func layout() {
         super.layout()
+        let size = tableView.frame.size
         tableView.frame = bounds
+        
+        if size.height > bounds.height {
+            self.tableView.beginTableUpdates()
+            self.tableView.layoutSubtreeIfNeeded()
+            self.tableView.endTableUpdates()
+        }
     }
 }
 
@@ -356,12 +365,12 @@ class InputDataController: GenericViewController<InputDataView> {
     var centerModalHeader: ModalHeaderData? = nil
     var keyWindowUpdate:(Bool, InputDataController) -> Void = { _, _ in }
     var hasBackSwipe:()->Bool = { return true }
-    private let searchKeyInvocation:() -> InputDataDeleteResult
+    var searchKeyInvocation:() -> InputDataDeleteResult
     var getBackgroundColor: ()->NSColor
     let identifier: String
     var ignoreRightBarHandler: Bool = false
     
-    var contextOject: Any?
+    var contextObject: Any?
     var didAppear: ((InputDataController)->Void)?
     
     var _abolishWhenNavigationSame: Bool = false
@@ -414,7 +423,7 @@ class InputDataController: GenericViewController<InputDataView> {
     }
     
     override func getRightBarViewOnce() -> BarView {
-        return customRightButton?(self) ?? (hasDone ? TextButtonBarView(controller: self, text: L10n.navigationDone, style: navigationButtonStyle, alignment:.Right) : super.getRightBarViewOnce())
+        return customRightButton?(self) ?? (hasDone ? TextButtonBarView(controller: self, text: strings().navigationDone, style: navigationButtonStyle, alignment:.Right) : super.getRightBarViewOnce())
     }
     
     private var doneView: TextButtonBarView {
@@ -594,6 +603,7 @@ class InputDataController: GenericViewController<InputDataView> {
             }
             
             self.afterTransaction(self)
+
             self.modalTransitionHandler?(transition.animated)
             
             let wasReady: Bool = self.didSetReady
@@ -763,7 +773,7 @@ class InputDataController: GenericViewController<InputDataView> {
                 return .invoked
             }
             
-        }, with: self, for: .F, priority: self.responderPriority, modifierFlags: nil)
+        }, with: self, for: .F, priority: self.responderPriority, modifierFlags: [.command])
         
         self.window?.set(handler: { [weak self] _ -> KeyHandlerResult in
             let view = self?.findReponsderView as? InputDataRowView

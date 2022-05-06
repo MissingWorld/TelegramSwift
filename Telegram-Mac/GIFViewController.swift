@@ -9,7 +9,7 @@
 import Cocoa
 import TGUIKit
 import TelegramCore
-import SyncCore
+
 import Postbox
 import SwiftSignalKit
 
@@ -102,7 +102,7 @@ struct GIFKeyboardConfiguration : Equatable {
     
 }
 
-private func prepareEntries(left:[InputContextEntry], right:[InputContextEntry], context: AccountContext,  initialSize:NSSize, arguments: RecentGifsArguments?) -> TableUpdateTransition {
+private func prepareEntries(left:[InputContextEntry], right:[InputContextEntry], context: AccountContext,  initialSize:NSSize, arguments: RecentGifsArguments?, mode: EntertainmentViewController.Mode) -> TableUpdateTransition {
    let (removed, inserted, updated) = proccessEntriesWithoutReverse(left, right: right, { entry -> TableRowItem in
         switch entry {
         case let .contextMediaResult(collection, row, index):
@@ -113,31 +113,38 @@ private func prepareEntries(left:[InputContextEntry], right:[InputContextEntry],
                     switch result {
                     case let .internalReference(values):
                         if let file = values.file {
-                            arguments?.sendAppFile(file, view, false)
+                            arguments?.sendAppFile(file, view, false, false)
                         }
                     default:
                         break
                     }
                 }
             }, menuItems: { file, view in
-                return context.account.postbox.transaction { transaction -> [ContextMenuItem] in
-                    var items: [ContextMenuItem] = []
-                    if let mediaId = file.id {
-                        let gifItems = transaction.getOrderedListItems(collectionId: Namespaces.OrderedItemList.CloudRecentGifs).compactMap {$0.contents as? RecentMediaItem}
-                        if let _ = gifItems.firstIndex(where: {$0.media.id == mediaId}) {
-                            items.append(ContextMenuItem(L10n.messageContextRemoveGif, handler: {
-                                let _ = removeSavedGif(postbox: context.account.postbox, mediaId: mediaId).start()
-                            }))
-                        } else {
-                            items.append(ContextMenuItem(L10n.messageContextSaveGif, handler: {
-                                let _ = addSavedGif(postbox: context.account.postbox, fileReference: FileMediaReference.savedGif(media: file)).start()
-                            }))
+                if mode == .common {
+                    return context.account.postbox.transaction { transaction -> [ContextMenuItem] in
+                        var items: [ContextMenuItem] = []
+                        if let mediaId = file.id {
+                            let gifItems = transaction.getOrderedListItems(collectionId: Namespaces.OrderedItemList.CloudRecentGifs).compactMap { $0.contents.get(RecentMediaItem.self) }
+                            if let _ = gifItems.firstIndex(where: {$0.media.id == mediaId}) {
+                                items.append(ContextMenuItem(strings().messageContextRemoveGif, handler: {
+                                    let _ = removeSavedGif(postbox: context.account.postbox, mediaId: mediaId).start()
+                                }, itemImage: MenuAnimation.menu_remove_gif.value))
+                            } else {
+                                items.append(ContextMenuItem(strings().messageContextSaveGif, handler: {
+                                    let _ = addSavedGif(postbox: context.account.postbox, fileReference: FileMediaReference.savedGif(media: file)).start()
+                                }, itemImage: MenuAnimation.menu_add_gif.value))
+                            }
+                            items.append(ContextMenuItem(strings().chatSendWithoutSound, handler: {
+                                arguments?.sendAppFile(file, view, true, false)
+                            }, itemImage: MenuAnimation.menu_mute.value))
+                            items.append(ContextMenuItem(strings().chatSendScheduledMessage, handler: {
+                                arguments?.sendAppFile(file, view, false, true)
+                            }, itemImage: MenuAnimation.menu_schedule_message.value))
                         }
-                        items.append(ContextMenuItem(L10n.chatSendWithoutSound, handler: {
-                            arguments?.sendAppFile(file, view, true)
-                        }))
+                        return items
                     }
-                    return items
+                } else {
+                    return .single([])
                 }
             }))
         case let .separator(string, _, _):
@@ -166,7 +173,7 @@ private func prepareTabTransition(left:[GifTabEntry], right:[GifTabEntry], initi
 private func recentEntries(for view:OrderedItemListView?, initialSize:NSSize) -> [InputContextEntry] {
     if let view = view {
         
-        let result: [ChatContextResult] = view.items.compactMap({($0.contents as? RecentMediaItem)?.media as? TelegramMediaFile}).map { file in
+        let result: [ChatContextResult] = view.items.compactMap({ $0.contents.get(RecentMediaItem.self)?.media }).map { file in
             let reference = ChatContextResult.InternalReference(queryId: 0, id: "gif-panel", type: "gif", title: nil, description: nil, image: nil, file: file, message: .auto(caption: "", entities: nil, replyMarkup: nil))
             return .internalReference(reference)
         }
@@ -194,10 +201,29 @@ private func tabsEntries(_ emojis: [String], selected: GifTabEntryId) -> [GifTab
     return entries
 }
 
-private func gifEntries(for collection: ChatContextResultCollection?, results: [ChatContextResult], initialSize: NSSize) -> [InputContextEntry] {
+private func gifEntries(for collection: ChatContextResultCollection?, results: [ChatContextResult], initialSize: NSSize, mode: EntertainmentViewController.Mode) -> [InputContextEntry] {
     var result: [InputContextEntry] = []
     if let collection = collection {
+        
         result = makeMediaEnties(results, isSavedGifs: true, initialSize: NSMakeSize(initialSize.width, 100)).map({InputContextEntry.contextMediaResult(collection, $0, arc4random64())})
+        
+        switch mode {
+        case .selectAvatar:
+            result = result.filter { entry in
+                switch entry {
+                case let .contextResult(_, result, _):
+                    if case .externalReference = result {
+                        return false
+                    } else {
+                        return true
+                    }
+                default:
+                    return true
+                }
+            }
+        default:
+            break
+        }
     }
     
     return result
@@ -205,7 +231,7 @@ private func gifEntries(for collection: ChatContextResultCollection?, results: [
 
 final class RecentGifsArguments {
     var sendInlineResult:(ChatContextResultCollection,ChatContextResult, NSView) -> Void = { _,_,_  in}
-    var sendAppFile:(TelegramMediaFile, NSView, Bool) -> Void = { _,_,_ in}
+    var sendAppFile:(TelegramMediaFile, NSView, Bool, Bool) -> Void = { _,_,_, _ in}
     var searchBySuggestion:(String)->Void = { _ in }
 }
 
@@ -370,6 +396,8 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
     private let searchStateDisposable = MetaDisposable()
     private let preloadDisposable = MetaDisposable()
     var makeSearchCommand:((ESearchCommand)->Void)?
+    
+    var mode: EntertainmentViewController.Mode = .common
 
     override init(_ context: AccountContext) {
         super.init(context)
@@ -430,7 +458,7 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
     }
     
     override var canBecomeResponder: Bool {
-        if let view = context.sharedContext.bindings.rootNavigation().view as? SplitView {
+        if let view = context.bindings.rootNavigation().view as? SplitView {
             return view.state == .single
         }
         return false
@@ -460,13 +488,13 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
         _ = atomicSize.swap(_frameRect.size)
         let arguments = RecentGifsArguments()
         
-        arguments.sendAppFile = { [weak self] file, view, silent in
+        arguments.sendAppFile = { [weak self] file, view, silent, schedule in
             if let slowMode = self?.chatInteraction?.presentation.slowMode, slowMode.hasLocked {
                 showSlowModeTimeoutTooltip(slowMode, for: view)
             } else {
-                self?.chatInteraction?.sendAppFile(file, silent, self?.searchState.request)
+                self?.interactions?.sendGIF(file, silent, schedule)
                 self?.makeSearchCommand?(.close)
-                self?.context.sharedContext.bindings.entertainment().closePopover()
+                self?.interactions?.close()
             }
         }
         
@@ -476,7 +504,7 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
             } else {
                 self?.chatInteraction?.sendInlineResult(results, result)
                 self?.makeSearchCommand?(.close)
-                self?.context.sharedContext.bindings.entertainment().closePopover()
+                self?.interactions?.close()
             }
         }
         
@@ -506,6 +534,8 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
         
         let searchState:Atomic<SearchGifsState> = Atomic(value: SearchGifsState(request: "", state: .None, values: [], nextOffset: "", tab: .recent))
         
+        let mode = self.mode
+        
         let signal = combineLatest(queue: prepareQueue, context.account.postbox.combinedView(keys: [.orderedItemList(id: Namespaces.OrderedItemList.CloudRecentGifs)]), self.searchValue.get(), tabsState.get(), loadNext.get()) |> mapToSignal { view, search, selectedTab, _ -> Signal<(TableUpdateTransition, GifTabEntryId), NoError> in
             
             _ = searchState.modify { current -> SearchGifsState in
@@ -522,7 +552,7 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
             
             switch search.state {
             case .Focus:
-                let searchSignal = searchGifs(account: context.account, query: search.request, nextOffset: searchState.with { $0.nextOffset })
+                let searchSignal = context.engine.stickers.searchGifs(query: search.request, nextOffset: searchState.with { $0.nextOffset })
                 return searchSignal |> map { result in
                     _ = searchState.modify { current -> SearchGifsState in
                         var current = current
@@ -530,8 +560,8 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
                         current.nextOffset = result?.nextOffset ?? ""
                         return current
                     }
-                    let entries = gifEntries(for: result, results: searchState.with { $0.values }, initialSize: initialSize.with { $0 })
-                    return (prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments), selectedTab)
+                    let entries = gifEntries(for: result, results: searchState.with { $0.values }, initialSize: initialSize.with { $0 }, mode: mode)
+                    return (prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments, mode: mode), selectedTab)
                 }
             default:
                 var request: String? = nil
@@ -545,7 +575,8 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
                     request = value
                 }
                 if let request = request {
-                    let searchSignal = searchGifs(account: context.account, query: request, nextOffset: searchState.with { $0.nextOffset })
+                    
+                    let searchSignal = context.engine.stickers.searchGifs(query: request, nextOffset: searchState.with { $0.nextOffset })
                     return searchSignal |> map { result in
                         _ = searchState.modify { current -> SearchGifsState in
                             var current = current
@@ -553,13 +584,13 @@ class GIFViewController: TelegramGenericViewController<TableContainer>, Notifabl
                             current.nextOffset = result?.nextOffset ?? ""
                             return current
                         }
-                        let entries = gifEntries(for: result, results: searchState.with { $0.values }, initialSize: initialSize.with { $0 })
-                        return (prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments), selectedTab)
+                        let entries = gifEntries(for: result, results: searchState.with { $0.values }, initialSize: initialSize.with { $0 }, mode: mode)
+                        return (prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments, mode: mode), selectedTab)
                     }
                 } else {
                     let postboxView = view.views[.orderedItemList(id: Namespaces.OrderedItemList.CloudRecentGifs)] as! OrderedItemListView
                     let entries = recentEntries(for: postboxView, initialSize: initialSize.with { $0 }).sorted(by: <)
-                    return .single((prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments), selectedTab))
+                    return .single((prepareEntries(left: previous.swap(entries), right: entries, context: context, initialSize: initialSize.with { $0 }, arguments: arguments, mode: mode), selectedTab))
                 }
                
             }

@@ -10,7 +10,7 @@ import Cocoa
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 import TGUIKit
 
 private final class GroupPeersArguments {
@@ -30,7 +30,7 @@ private final class GroupPeersArguments {
     }
     
     func peerInfo(_ peerId:PeerId) {
-        context.sharedContext.bindings.rootNavigation().push(PeerInfoController(context: context, peerId: peerId))
+        context.bindings.rootNavigation().push(PeerInfoController(context: context, peerId: peerId))
     }
 }
 
@@ -87,11 +87,11 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                         label = ""
                     }
                     
-                    var string:String = L10n.peerStatusRecently
+                    var string:String = strings().peerStatusRecently
                     var color:NSColor = theme.colors.grayText
                     
                     if let peer = peer as? TelegramUser, let botInfo = peer.botInfo {
-                        string = botInfo.flags.contains(.hasAccessToChatHistory) ? L10n.peerInfoBotStatusHasAccess : L10n.peerInfoBotStatusHasNoAccess
+                        string = botInfo.flags.contains(.hasAccessToChatHistory) ? strings().peerInfoBotStatusHasAccess : strings().peerInfoBotStatusHasNoAccess
                     } else if let presence = presence as? TelegramUserPresence {
                         let timestamp = CFAbsoluteTimeGetCurrent() + NSTimeIntervalSince1970
                         (string, _, color) = stringAndActivityForUserPresence(presence, timeDifference: arguments.context.timeDifference, relativeTo: Int32(timestamp))
@@ -116,7 +116,7 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                 index += 1
             case let .showMore(_, _, viewType):
                 entries.append(.custom(sectionId: sectionId, index: index, value: .none, identifier: InputDataIdentifier("_id_show_more"), equatable: nil, comparable: nil, item: { initialSize, stableId in
-                    return GeneralInteractedRowItem(initialSize, stableId: stableId, name: L10n.peerInfoShowMore, nameStyle: blueActionButton, type: .none, viewType: viewType, action: {
+                    return GeneralInteractedRowItem(initialSize, stableId: stableId, name: strings().peerInfoShowMore, nameStyle: blueActionButton, type: .none, viewType: viewType, action: {
                         arguments.showMore()
                     }, thumb: GeneralThumbAdditional(thumb: theme.icons.chatSearchUp, textInset: 52, thumbInset: 4), inset: NSEdgeInsetsZero)
                 }))
@@ -187,9 +187,9 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                     if access.highlightAdmins {
                         switch sortedParticipants[i] {
                         case .admin:
-                            memberStatus = .admin(rank: L10n.chatAdminBadge)
+                            memberStatus = .admin(rank: strings().chatAdminBadge)
                         case  .creator:
-                            memberStatus = .admin(rank: L10n.chatOwnerBadge)
+                            memberStatus = .admin(rank: strings().chatOwnerBadge)
                         case .member:
                             memberStatus = .member
                         }
@@ -235,19 +235,12 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                     }
                     
                     var menuItems: [ContextMenuItem] = []
-                    if sortedParticipants[i].peerId != arguments.context.peerId {
-                        menuItems.append(ContextMenuItem(L10n.chatListContextPreview, handler: {
-                            arguments.chatPreview(sortedParticipants[i].peerId)
-                        }))
-                        if canRestrict {
-                            menuItems.append(ContextSeparatorItem())
-                        }
-                    }
+
                    
                     if canRestrict {
-                        menuItems.append(ContextMenuItem(L10n.peerInfoGroupMenuDelete, handler: {
+                        menuItems.append(ContextMenuItem(strings().peerInfoGroupMenuDelete, handler: {
                             arguments.removePeer(sortedParticipants[i].peerId)
-                        }))
+                        }, itemMode: .destruct, itemImage: MenuAnimation.menu_delete.value))
                     }
                     
                     usersBlock.append(.member(section: Int(sectionId), index: i, peerId: peer.id, peer: peer, presence: view.peerPresences[peer.id], activity: inputActivities[peer.id], memberStatus: memberStatus, editing: editing, menuItems: menuItems, enabled: !disabledPeerIds.contains(peer.id), viewType: .singleItem))
@@ -316,9 +309,9 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                 if access.highlightAdmins {
                     switch sortedParticipants[i].participant {
                     case let .creator(_, _, rank):
-                        memberStatus = .admin(rank: rank ?? L10n.chatOwnerBadge)
+                        memberStatus = .admin(rank: rank ?? strings().chatOwnerBadge)
                     case let .member(_, _, adminRights, _, rank):
-                        memberStatus = adminRights != nil ? .admin(rank: rank ?? L10n.chatAdminBadge) : .member
+                        memberStatus = adminRights != nil ? .admin(rank: rank ?? strings().chatAdminBadge) : .member
                     }
                 } else {
                     memberStatus = .member
@@ -365,27 +358,19 @@ private func groupPeersEntries(state: GroupPeersState, isEditing: Bool, view: Pe
                 var menuItems:[ContextMenuItem] = []
                 
                 
-                if sortedParticipants[i].participant.peerId != arguments.context.peerId {
-                    menuItems.append(ContextMenuItem(L10n.chatListContextPreview, handler: {
-                        arguments.chatPreview(sortedParticipants[i].participant.peerId)
-                    }))
-                    if canPromote || canRestrict {
-                        menuItems.append(ContextSeparatorItem())
-                    }
-                }
-                
                 if canPromote {
-                    menuItems.append(ContextMenuItem(L10n.peerInfoGroupMenuPromote, handler: {
+                    menuItems.append(ContextMenuItem(strings().peerInfoGroupMenuPromote, handler: {
                         arguments.promote(sortedParticipants[i].participant)
-                    }))
+                    }, itemImage: MenuAnimation.menu_promote.value))
                 }
                 if canRestrict {
-                    menuItems.append(ContextMenuItem(L10n.peerInfoGroupMenuRestrict, handler: {
+                    menuItems.append(ContextMenuItem(strings().peerInfoGroupMenuRestrict, handler: {
                         arguments.restrict(sortedParticipants[i].participant)
-                    }))
-                    menuItems.append(ContextMenuItem(L10n.peerInfoGroupMenuDelete, handler: {
+                    }, itemImage: MenuAnimation.menu_restrict.value))
+                    menuItems.append(ContextSeparatorItem())
+                    menuItems.append(ContextMenuItem(strings().peerInfoGroupMenuDelete, handler: {
                         arguments.removePeer(sortedParticipants[i].peer.id)
-                    }))
+                    }, itemMode: .destruct, itemImage: MenuAnimation.menu_delete.value))
                 }
                 
                 let editing:ShortPeerDeleting?
@@ -445,7 +430,7 @@ func PeerMediaGroupPeersController(context: AccountContext, peerId: PeerId, edit
     }
 
     if peerId.namespace == Namespaces.Peer.CloudChannel {
-        let (disposable, control) = context.peerChannelMemberCategoriesContextsManager.recent(postbox: context.account.postbox, network: context.account.network, accountPeerId: context.account.peerId, peerId: peerId, updated: { state in
+        let (disposable, control) = context.peerChannelMemberCategoriesContextsManager.recent(peerId: peerId, updated: { state in
             channelMembersPromise.set(.single(state.list))
         })
         loadMoreControl = control
@@ -455,7 +440,7 @@ func PeerMediaGroupPeersController(context: AccountContext, peerId: PeerId, edit
     }
     
     let upgradeToSupergroup: (PeerId, @escaping () -> Void) -> Void = { upgradedPeerId, f in
-        let navigationController = context.sharedContext.bindings.rootNavigation()
+        let navigationController = context.bindings.rootNavigation()
         
         var chatController: ChatController? = ChatController(context: context, chatLocation: .peer(upgradedPeerId))
         
@@ -510,7 +495,7 @@ func PeerMediaGroupPeersController(context: AccountContext, peerId: PeerId, edit
                     }
                     
                     if peerId.namespace == Namespaces.Peer.CloudChannel {
-                        return context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(account: context.account, peerId: peerId, memberId: memberId, bannedRights: TelegramChatBannedRights(flags: [.banReadMessages], untilDate: Int32.max))
+                        return context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(peerId: peerId, memberId: memberId, bannedRights: TelegramChatBannedRights(flags: [.banReadMessages], untilDate: Int32.max))
                             |> afterDisposed {
                                 updateState { state in
                                     var state = state
@@ -520,7 +505,7 @@ func PeerMediaGroupPeersController(context: AccountContext, peerId: PeerId, edit
                         }
                     }
                     
-                    return removePeerMember(account: context.account, peerId: peerId, memberId: memberId)
+                    return context.engine.peers.removePeerMember(peerId: peerId, memberId: memberId)
                         |> deliverOnMainQueue
                         |> afterDisposed {
                             updateState { state in
@@ -545,7 +530,7 @@ func PeerMediaGroupPeersController(context: AccountContext, peerId: PeerId, edit
         showModal(with: ChannelAdminController(context, peerId: peerId, adminId: participant.peerId, initialParticipant: participant, updated: { _ in }, upgradedToSupergroup: upgradeToSupergroup), for: context.window)
     }, restrict: { participant in
         showModal(with: RestrictedModalViewController(context, peerId: peerId, memberId: participant.peerId, initialParticipant: participant, updated: { updatedRights in
-            _ = context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(account: context.account, peerId: peerId, memberId: participant.peerId, bannedRights: updatedRights).start()
+            _ = context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(peerId: peerId, memberId: participant.peerId, bannedRights: updatedRights).start()
         }), for: context.window)
     }, chatPreview: { peerId in
         showModal(with: ChatModalPreviewController(location: .peer(peerId), context: context), for: context.window)

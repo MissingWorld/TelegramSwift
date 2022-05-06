@@ -8,7 +8,7 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+
 import SwiftSignalKit
 import Postbox
 import TGUIKit
@@ -167,6 +167,7 @@ class InputPasteboardParser: NSObject {
             var image:NSImage? = nil
             
             if files.isEmpty {
+                                                
                 if let images = pasteboard.readObjects(forClasses: [NSImage.self], options: nil) as? [NSImage], !images.isEmpty {
                     
                     if let representation = images[0].representations.first as? NSPDFImageRep {
@@ -200,7 +201,7 @@ class InputPasteboardParser: NSObject {
             let afterSizeCheck = files.count
             
             if afterSizeCheck == 0 && previous != afterSizeCheck {
-                alert(for: mainWindow, info: L10n.appMaxFileSize1)
+                alert(for: mainWindow, info: strings().appMaxFileSize1)
                 return false
             }
             if let peer = chatInteraction.presentation.peer, let permissionText = permissionText(from: peer, for: .banSendMedia) {

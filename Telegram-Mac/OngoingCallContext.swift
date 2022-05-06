@@ -10,7 +10,7 @@ import Cocoa
 import Foundation
 import SwiftSignalKit
 import TelegramCore
-import SyncCore
+import InAppSettings
 import Postbox
 import TgVoipWebrtc
 import TGUIKit
@@ -220,8 +220,6 @@ private func ongoingDataSavingForType(_ type: VoiceCallDataSaving) -> OngoingCal
         return .cellular
     case .always:
         return .always
-    default:
-        return .never
     }
 }
 
@@ -233,13 +231,11 @@ private func ongoingDataSavingForTypeWebrtc(_ type: VoiceCallDataSaving) -> Ongo
         return .cellular
     case .always:
         return .always
-    default:
-        return .never
     }
 }
 
 
-private protocol OngoingCallThreadLocalContextProtocol: class {
+private protocol OngoingCallThreadLocalContextProtocol: AnyObject {
     func nativeSetNetworkType(_ type: NetworkType)
     func nativeSetIsMuted(_ value: Bool)
     func nativeSetIsLowBatteryLevel(_ value: Bool)
@@ -657,12 +653,15 @@ final class OngoingCallContext {
         }
         
         
-        self.signalingDataDisposable = (callSessionManager.callSignalingData(internalId: internalId)).start(next: { [weak self] data in
+        
+        self.signalingDataDisposable = callSessionManager.beginReceivingCallSignalingData(internalId: internalId, { [weak self] dataList in
             print("data received")
             queue.async {
                 self?.withContext { context in
                     if let context = context as? OngoingCallThreadLocalContextWebrtc {
-                        context.addSignaling(data)
+                        for data in dataList {
+                            context.addSignaling(data)
+                        }
                     }
                 }
             }
@@ -737,7 +736,7 @@ final class OngoingCallContext {
                 if let callId = callId, !statsLogPath.isEmpty, let data = try? Data(contentsOf: URL(fileURLWithPath: statsLogPath)), let dataString = String(data: data, encoding: .utf8) {
                     debugLogValue.set(.single(dataString))
                     if sendDebugLogs {
-                        let _ = saveCallDebugLog(network: self.account.network, callId: callId, log: dataString).start()
+//                        let _ = saveCallDebugLog(network: self.account.network, callId: callId, log: dataString).start()
                     }
                 }
             }
@@ -837,6 +836,11 @@ final class OngoingCallContext {
                                 view?.setOnIsMirroredUpdated { value in
                                     f?(value)
                                 }
+                            },
+                            setIsPaused: { [weak view] paused in
+                                view?.setIsPaused(paused)
+                            }, renderToSize: { [weak view] size, animated in
+                                view?.render(to: size, animated: animated)
                             }
                         ))
                     } else {

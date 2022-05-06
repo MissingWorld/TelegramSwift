@@ -10,7 +10,7 @@ import Cocoa
 
 import TGUIKit
 import TelegramCore
-import SyncCore
+import InAppSettings
 import SwiftSignalKit
 import Postbox
 class ChatMediaVoiceLayoutParameters : ChatMediaLayoutParameters {
@@ -43,26 +43,22 @@ class ChatVoiceRowItem: ChatMediaItem {
     override init(_ initialSize:NSSize, _ chatInteraction:ChatInteraction, _ context: AccountContext, _ object: ChatHistoryEntry, _ downloadSettings: AutomaticMediaDownloadSettings, theme: TelegramPresentationTheme) {
         super.init(initialSize, chatInteraction, context, object, downloadSettings, theme: theme)
         
-        self.parameters = ChatMediaLayoutParameters.layout(for: media as! TelegramMediaFile, isWebpage: false, chatInteraction: chatInteraction, presentation: .make(for: object.message!, account: context.account, renderType: object.renderType), automaticDownload: downloadSettings.isDownloable(object.message!), isIncoming: object.message!.isIncoming(context.account, object.renderType == .bubble), autoplayMedia: object.autoplayMedia)
+        self.parameters = ChatMediaLayoutParameters.layout(for: media as! TelegramMediaFile, isWebpage: false, chatInteraction: chatInteraction, presentation: .make(for: object.message!, account: context.account, renderType: object.renderType, theme: theme), automaticDownload: downloadSettings.isDownloable(object.message!), isIncoming: object.message!.isIncoming(context.account, object.renderType == .bubble), autoplayMedia: object.autoplayMedia)
     }
     
     override func canMultiselectTextIn(_ location: NSPoint) -> Bool {
         return super.canMultiselectTextIn(location)
     }
     
-    override var additionalLineForDateInBubbleState: CGFloat? {
-        if isForceRightLine {
-            return rightSize.height
-        }
+    override var isForceRightLine: Bool {
         if let parameters = parameters as? ChatMediaVoiceLayoutParameters {
             if parameters.durationLayout.layoutSize.width + 50 + rightSize.width + insetBetweenContentAndDate > contentSize.width {
-                return rightSize.height
+                return true
             }
         }
-        
-        return super.additionalLineForDateInBubbleState
+        return super.isForceRightLine
     }
-    
+
     override func makeContentSize(_ width: CGFloat) -> NSSize {
         if let parameters = parameters as? ChatMediaVoiceLayoutParameters {
             parameters.durationLayout.measure(width: width - 50)

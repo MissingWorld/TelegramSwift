@@ -11,18 +11,18 @@ import TGUIKit
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 class ForwardPanelModel: ChatAccessoryModel {
     
     
     
-    private var account:Account
-    private var forwardMessages:[Message] = []
-    
-    init(forwardMessages:[Message], account:Account) {
-        
+    private let account:Account
+    private let forwardMessages:[Message]
+    private let hideNames: Bool
+    init(forwardMessages:[Message], hideNames: Bool, account:Account) {
         self.account = account
         self.forwardMessages = forwardMessages
+        self.hideNames = hideNames
         super.init()
         self.make()
     }
@@ -63,8 +63,28 @@ class ForwardPanelModel: ChatAccessoryModel {
             }
         }
         
-        self.headerAttr = NSAttributedString.initialize(string: names.joined(separator: ", "), color: theme.colors.accent, font: .medium(.text))
-        self.messageAttr = NSAttributedString.initialize(string: tr(L10n.messageAccessoryPanelForwardedCountable(forwardMessages.count)), color: theme.colors.text, font: .normal(.text))
+        //hideNames ? strings().chatInputForwardHidden :  names.joined(separator: ", ")
+        
+        let text = hideNames ? strings().chatAccessoryHiddenCountable(forwardMessages.count) : strings().chatAccessoryForwardCountable(forwardMessages.count)
+        self.headerAttr = NSAttributedString.initialize(string: text, color: theme.colors.accent, font: .medium(.text))
+        if forwardMessages.count == 1, !forwardMessages[0].text.isEmpty, forwardMessages[0].media.isEmpty {
+            let text: String
+            let messageText = chatListText(account: account, for: forwardMessages[0]).string
+            if forwardMessages[0].effectiveAuthor?.id == account.peerId {
+                text = "\(strings().chatAccessoryForwardYou): \(messageText)"
+            } else if let author = forwardMessages[0].effectiveAuthor {
+                text = "\(author.displayTitle): \(messageText)"
+            } else {
+                text = messageText
+            }
+            self.messageAttr = NSAttributedString.initialize(string: text, color: theme.colors.grayText, font: .normal(.text))
+        } else {
+            let authors = uniquePeers(from: forwardMessages.compactMap { $0.effectiveAuthor })
+            let messageText = authors.map { $0.compactDisplayTitle }.joined(separator: ", ")
+            let text = "\(strings().chatAccessoryForwardFrom): \(messageText)"
+
+            self.messageAttr = NSAttributedString.initialize(string: text, color: theme.colors.grayText, font: .normal(.text))
+        }
 
         nodeReady.set(.single(true))
         self.setNeedDisplay()

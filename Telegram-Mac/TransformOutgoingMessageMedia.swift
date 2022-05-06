@@ -8,11 +8,10 @@
 
 import Foundation
 import TelegramCore
-import SyncCore
 import Postbox
 import SwiftSignalKit
 import TGUIKit
-import SyncCore
+
 
 public func transformOutgoingMessageMedia(postbox: Postbox, network: Network, reference: AnyMediaReference, opportunistic: Bool) -> Signal<AnyMediaReference?, NoError> {
     switch reference.media {
@@ -111,8 +110,7 @@ public func transformOutgoingMessageMedia(postbox: Postbox, network: Network, re
                                 
                                 CGImageDestinationAddImage(colorDestination, image, options as CFDictionary)
                                 if CGImageDestinationFinalize(colorDestination) {
-                                    let isSecretRelated = (file.previewRepresentations.first as? LocalFileMediaResource)?.isSecretRelated ?? false
-                                    let thumbnailResource = LocalFileMediaResource(fileId: arc4random64(), isSecretRelated: isSecretRelated)
+                                    let thumbnailResource = LocalFileMediaResource(fileId: arc4random64(), isSecretRelated: false)
                                     postbox.mediaBox.storeResourceData(thumbnailResource.id, data: mutableData as Data)
                                     subscriber.putNext(AnyMediaReference.standalone(media: file.withUpdatedSize(Int(size ?? 0)).withUpdatedPreviewRepresentations([TelegramMediaImageRepresentation(dimensions: PixelDimensions(image.size), resource: thumbnailResource, progressiveSizes: [], immediateThumbnailData: nil)])))
                                     

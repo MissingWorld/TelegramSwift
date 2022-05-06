@@ -10,12 +10,34 @@ import Foundation
 import TGUIKit
 import SwiftSignalKit
 
+
 final class GroupVideoView: View {
+    
+    
     private let videoViewContainer: View
     let videoView: PresentationCallVideoView
     var gravity: CALayerContentsGravity = .resizeAspect
     var initialGravity: CALayerContentsGravity? = nil
     private var validLayout: CGSize?
+    
+    private var videoAnimator: DisplayLinkAnimator?
+    
+    private var isMirrored: Bool = false {
+        didSet {
+            CATransaction.begin()
+            if isMirrored {
+                let rect = self.videoViewContainer.bounds
+                var fr = CATransform3DIdentity
+                fr = CATransform3DTranslate(fr, rect.width / 2, 0, 0)
+                fr = CATransform3DScale(fr, -1, 1, 1)
+                fr = CATransform3DTranslate(fr, -(rect.width / 2), 0, 0)
+                self.videoViewContainer.layer?.sublayerTransform = fr
+            } else {
+                self.videoViewContainer.layer?.sublayerTransform = CATransform3DIdentity
+            }
+            CATransaction.commit()
+        }
+    }
     
     var tapped: (() -> Void)?
     
@@ -28,27 +50,29 @@ final class GroupVideoView: View {
         self.videoViewContainer.addSubview(self.videoView.view)
         self.addSubview(self.videoViewContainer)
         
-        videoView.setOnFirstFrameReceived({ [weak self] _ in
-            Queue.mainQueue().async {
-                guard let strongSelf = self else {
-                    return
-                }
-                if let size = strongSelf.validLayout {
-                    strongSelf.updateLayout(size: size, transition: .immediate)
-                }
+        
+        videoView.setOnOrientationUpdated({ [weak self] _, _ in
+            guard let strongSelf = self else {
+                return
+            }
+            if let size = strongSelf.validLayout {
+                strongSelf.updateLayout(size: size, transition: .immediate)
             }
         })
         
-        videoView.setOnOrientationUpdated({ [weak self] _, _ in
-            Queue.mainQueue().async {
-                guard let strongSelf = self else {
-                    return
-                }
-                if let size = strongSelf.validLayout {
-                    strongSelf.updateLayout(size: size, transition: .immediate)
-                }
-            }
+        videoView.setOnIsMirroredUpdated({ [weak self] isMirrored in
+            self?.isMirrored = isMirrored
         })
+        
+//        videoView.setIsPaused(true);
+    }
+    
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+    }
+    
+    override var mouseDownCanMoveWindow: Bool {
+        return true
     }
     
     required init?(coder: NSCoder) {
@@ -60,23 +84,9 @@ final class GroupVideoView: View {
     }
     
     func setVideoContentMode(_ contentMode: CALayerContentsGravity, animated: Bool) {
-
-        if let gravity = initialGravity {
-            switch gravity {
-            case .resizeAspectFill:
-                self.videoView.setVideoContentMode(.resizeAspect)
-                self.validLayout = nil
-                let transition: ContainedViewLayoutTransition = .immediate
-                self.gravity = .resizeAspectFill
-                self.updateLayout(size: frame.size, transition: transition)
-                self.initialGravity = nil
-            default:
-                break
-            }
-        }
         self.gravity = contentMode
         self.validLayout = nil
-        let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.3, curve: .easeInOut) : .immediate
+        let transition: ContainedViewLayoutTransition = animated ? .animated(duration: 0.3, curve: .easeOut) : .immediate
         self.updateLayout(size: frame.size, transition: transition)
     }
     
@@ -90,70 +100,58 @@ final class GroupVideoView: View {
         }
         self.validLayout = size
         
-        transition.updateFrame(view: self.videoViewContainer, frame: focus(size))
-        let aspect = videoView.getAspect()
+        var videoRect: CGRect = .zero
+        videoRect = focus(size)
         
-        switch gravity {
-        case .resizeAspect:
-            transition.updateFrame(view: self.videoView.view, frame: focus(size))
-        case .resizeAspectFill:
-            var boundingSize = size
-            boundingSize = NSMakeSize(max(size.width, size.height) * aspect, max(size.width, size.height))
-            boundingSize = boundingSize.aspectFilled(size)
-            transition.updateFrame(view: self.videoView.view, frame: focus(boundingSize))
-        default:
-            break
+        transition.updateFrame(view: self.videoViewContainer, frame: videoRect)
+        
+        if transition.isAnimated {
+            let videoView = self.videoView
+                        
+            videoView.renderToSize(self.videoView.view.frame.size, true)
+            videoView.setIsPaused(true)
+
+            transition.updateFrame(view: videoView.view, frame: videoRect, completion: { [weak videoView] _ in
+                videoView?.renderToSize(videoRect.size, false)
+                videoView?.setIsPaused(false)
+            })
+        } else {
+            transition.updateFrame(view: videoView.view, frame: videoRect)
         }
         
 
-        
-        let orientation = self.videoView.getOrientation()
-//        if aspect <= 0.01 {
-//            aspect = 3.0 / 4.0
-//        }
-        
-        let rotatedAspect: CGFloat
-        let angle: CGFloat
-        let switchOrientation: Bool
-        switch orientation {
-        case .rotation0:
-            angle = 0.0
-            rotatedAspect = 1 / aspect
-            switchOrientation = false
-        case .rotation90:
-            angle = CGFloat.pi / 2.0
-            rotatedAspect = aspect
-            switchOrientation = true
-        case .rotation180:
-            angle = CGFloat.pi
-            rotatedAspect = 1 / aspect
-            switchOrientation = false
-        case .rotation270:
-            angle = CGFloat.pi * 3.0 / 2.0
-            rotatedAspect = aspect
-            switchOrientation = true
+        for subview in self.videoView.view.subviews {
+            transition.updateFrame(view: subview, frame: videoRect.size.bounds)
         }
         
-        var rotatedVideoSize = CGSize(width: 100.0, height: rotatedAspect * 100.0)
-        
-        if size.width < 100.0 || true {
-            rotatedVideoSize = rotatedVideoSize.aspectFilled(size)
-        } else {
-            rotatedVideoSize = rotatedVideoSize.aspectFitted(size)
+        var fr = CATransform3DIdentity
+        if isMirrored {
+            let rect = videoRect
+            fr = CATransform3DTranslate(fr, rect.width / 2, 0, 0)
+            fr = CATransform3DScale(fr, -1, 1, 1)
+            fr = CATransform3DTranslate(fr, -(rect.width / 2), 0, 0)
         }
         
-        if switchOrientation {
-            rotatedVideoSize = CGSize(width: rotatedVideoSize.height, height: rotatedVideoSize.width)
+        switch transition {
+        case .immediate:
+            self.videoViewContainer.layer?.sublayerTransform = fr
+        case let .animated(duration, curve):
+            let animation = CABasicAnimation(keyPath: "sublayerTransform")
+            animation.fromValue = self.videoViewContainer.layer?.presentation()?.sublayerTransform ?? self.videoViewContainer.layer?.sublayerTransform ?? CATransform3DIdentity
+            animation.toValue = fr
+            animation.timingFunction = .init(name: curve.timingFunction)
+            animation.duration = duration
+            self.videoViewContainer.layer?.add(animation, forKey: "sublayerTransform")
+            self.videoViewContainer.layer?.sublayerTransform = fr
         }
-        var rotatedVideoFrame = CGRect(origin: CGPoint(x: floor((size.width - rotatedVideoSize.width) / 2.0), y: floor((size.height - rotatedVideoSize.height) / 2.0)), size: rotatedVideoSize)
-        rotatedVideoFrame.origin.x = floor(rotatedVideoFrame.origin.x)
-        rotatedVideoFrame.origin.y = floor(rotatedVideoFrame.origin.y)
-        rotatedVideoFrame.size.width = ceil(rotatedVideoFrame.size.width)
-        rotatedVideoFrame.size.height = ceil(rotatedVideoFrame.size.height)
-      //  self.videoView.view.center = rotatedVideoFrame.center
-//        self.videoView.view.frame = bounds
-        
-        let transition: ContainedViewLayoutTransition = .immediate
+
     }
     
+    override func viewDidMoveToSuperview() {
+        if superview == nil {
+            didRemoveFromSuperview?()
+        } 
+    }
+    
+    var didRemoveFromSuperview: (()->Void)? = nil
 }

@@ -8,7 +8,7 @@
 
 import Cocoa
 import TGUIKit
-
+import ColorPalette
 
 private let colors: [UInt32: String] = [
     0x8e0000: "Berry",
@@ -360,7 +360,7 @@ func importPalette(_ path: String) -> ColorPalette? {
         var parent: TelegramBuiltinTheme = .dayClassic
         var accentList:[PaletteAccentColor] = []
         var colors:[String: NSColor] = [:]
-        
+        var bubbleBackground_outgoing:[NSColor] = []
         /*
          else if name == "accentList" {
          accentList = value.components(separatedBy: ",").compactMap { NSColor(hexString: $0) }
@@ -378,7 +378,9 @@ func importPalette(_ path: String) -> ColorPalette? {
                     let name = components[0].trimmed
                     let value = components[1].trimmed
                     
-                    if name == "name" {
+                    if name == "bubbleBackground_outgoing" {
+                        bubbleBackground_outgoing = value.components(separatedBy: ",").compactMap { NSColor(hexString: $0) }
+                    } else if name == "name" {
                         paletteName = value
                     } else if name == "isDark" {
                         isDark = Int32(value) == 1
@@ -410,6 +412,16 @@ func importPalette(_ path: String) -> ColorPalette? {
         }
         
         if let name = paletteName {
+            
+            if bubbleBackground_outgoing.isEmpty {
+                let colors = [colors["bubbleBackgroundTop_outgoing"], colors["bubbleBackgroundBottom_outgoing"]].compactMap { $0 }
+                if colors.isEmpty {
+                    bubbleBackground_outgoing = parent.palette.bubbleBackground_outgoing
+                } else {
+                    bubbleBackground_outgoing = colors
+                }
+            }
+            
             return ColorPalette(isNative: false, isDark: isDark,
                                 tinted: tinted,
                                 name: name,
@@ -449,8 +461,7 @@ func importPalette(_ path: String) -> ColorPalette? {
                                 selectTextBubble_incoming: colors["selectTextBubble_incoming"] ?? parent.palette.selectTextBubble_incoming,
                                 selectTextBubble_outgoing: colors["selectTextBubble_outgoing"] ?? parent.palette.selectTextBubble_outgoing,
                                 bubbleBackground_incoming: colors["bubbleBackground_incoming"] ?? parent.palette.bubbleBackground_incoming,
-                                bubbleBackgroundTop_outgoing: colors["bubbleBackgroundBottom_outgoing"] ?? colors["bubbleBackground_outgoing"] ?? parent.palette.bubbleBackgroundTop_outgoing,
-                                bubbleBackgroundBottom_outgoing: colors["bubbleBackgroundBottom_outgoing"] ?? colors["bubbleBackground_outgoing"] ?? parent.palette.bubbleBackgroundTop_outgoing,
+                                bubbleBackground_outgoing: bubbleBackground_outgoing,
                                 bubbleBorder_incoming: colors["bubbleBorder_incoming"] ?? parent.palette.bubbleBorder_incoming,
                                 bubbleBorder_outgoing: colors["bubbleBorder_outgoing"] ?? parent.palette.bubbleBorder_outgoing,
                                 grayTextBubble_incoming: colors["grayTextBubble_incoming"] ?? parent.palette.grayTextBubble_incoming,
@@ -535,7 +546,19 @@ func importPalette(_ path: String) -> ColorPalette? {
                                 listBackground: colors["listBackground"] ?? parent.palette.listBackground,
                                 listGrayText: colors["listGrayText"] ?? parent.palette.listGrayText,
                                 grayHighlight: colors["grayHighlight"] ?? parent.palette.grayHighlight,
-                                focusAnimationColor: colors["focusAnimationColor"] ?? parent.palette.focusAnimationColor)
+                                focusAnimationColor: colors["focusAnimationColor"] ?? parent.palette.focusAnimationColor,
+                                reaction_foreground_bubble_incoming: colors["reaction_foreground_bubble_incoming"] ?? parent.palette.reaction_foreground_bubble_incoming,
+                                reaction_foreground_bubble_outgoing: colors["reaction_foreground_bubble_outgoing"] ?? parent.palette.reaction_foreground_bubble_outgoing,
+                                reaction_foreground_selected_bubble_incoming: colors["reaction_foreground_selected_bubble_incoming"] ?? parent.palette.reaction_foreground_selected_bubble_incoming,
+                                reaction_foreground_selected_bubble_outgoing: colors["reaction_foreground_selected_bubble_outgoing"] ?? parent.palette.reaction_foreground_selected_bubble_outgoing,
+                                reaction_background_bubble_incoming: colors["reaction_background_bubble_incoming"] ?? parent.palette.reaction_background_bubble_incoming,
+                                reaction_background_bubble_outgoing: colors["reaction_background_bubble_outgoing"] ?? parent.palette.reaction_background_bubble_outgoing,
+                                reaction_background_selected_bubble_incoming: colors["reaction_background_selected_bubble_incoming"] ?? parent.palette.reaction_background_selected_bubble_incoming,
+                                reaction_background_selected_bubble_outgoing: colors["reaction_background_selected_bubble_outgoing"] ?? parent.palette.reaction_background_selected_bubble_outgoing,
+                                reaction_foreground: colors["reaction_foreground"] ?? parent.palette.reaction_foreground,
+                                reaction_background: colors["reaction_background"] ?? parent.palette.reaction_background,
+                                reaction_foreground_selected: colors["reaction_foreground_selected"] ?? parent.palette.reaction_foreground_selected,
+                                reaction_background_selected: colors["reaction_background_selected"] ?? parent.palette.reaction_background_selected)
         }
         
     }

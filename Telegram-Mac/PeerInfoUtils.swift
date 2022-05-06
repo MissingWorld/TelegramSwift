@@ -8,7 +8,7 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+
 import Postbox
 
 struct GroupAccess {
@@ -47,6 +47,7 @@ extension Peer {
                 canEditMembers = true
                 canAddMembers = true
                 canReport = false
+                canMakeVoiceChat = true
             case .member:
                 break
             }

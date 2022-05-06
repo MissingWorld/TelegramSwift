@@ -10,8 +10,9 @@ import Cocoa
 
 import SwiftSignalKit
 import TelegramCore
-import SyncCore
+import TGModernGrowingTextView
 import Postbox
+import InAppSettings
 
 func contextQueryResultStateForChatInterfacePresentationState(_ chatPresentationInterfaceState: ChatPresentationInterfaceState, context: AccountContext, currentQuery: ChatPresentationInputQuery?) -> (ChatPresentationInputQuery?, Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError>)? {
     let inputQuery = chatPresentationInterfaceState.inputContext
@@ -48,7 +49,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
             }
         }
         
-        let hashtags: Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> = recentlyUsedHashtags(postbox: context.account.postbox) |> map { hashtags -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
+        let hashtags: Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> = context.engine.messages.recentlyUsedHashtags() |> map { hashtags -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
             let normalizedQuery = query.lowercased()
             var result: [String] = []
             for hashtag in hashtags {
@@ -64,7 +65,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
     case let .stickers(query):
         
         return (inputQuery, context.account.postbox.transaction { transaction -> StickerSettings in
-            let stickerSettings: StickerSettings = (transaction.getPreferencesEntry(key: ApplicationSpecificPreferencesKeys.stickerSettings) as? StickerSettings) ?? .defaultSettings
+            let stickerSettings: StickerSettings = transaction.getPreferencesEntry(key: ApplicationSpecificPreferencesKeys.stickerSettings)?.get(StickerSettings.self) ?? .defaultSettings
             return stickerSettings
         }
         |> mapToSignal { stickerSettings -> Signal<[FoundStickerItem], NoError> in
@@ -77,7 +78,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                 case .installed:
                     scope = [.installed]
                 }
-                return searchStickers(account: context.account, query: query, scope: scope)
+                return context.engine.stickers.searchStickers(query: query, scope: scope)
         }
         |> map { stickers -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
             return { _ in
@@ -90,7 +91,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
 //        })
     case let .emoji(query, firstWord):
         if !query.isEmpty {
-            let signal = context.sharedContext.inputSource.searchEmoji(postbox: context.account.postbox, sharedContext: context.sharedContext, query: query, completeMatch: query.length < 3, checkPrediction: firstWord) |> delay(firstWord ? 0.3 : 0, queue: .concurrentDefaultQueue())
+            let signal = context.sharedContext.inputSource.searchEmoji(postbox: context.account.postbox, engine: context.engine, sharedContext: context.sharedContext, query: query, completeMatch: query.length < 3, checkPrediction: firstWord) |> delay(firstWord ? 0.3 : 0, queue: .concurrentDefaultQueue())
 
             if firstWord {
                 return (inputQuery, .single({ _ in return nil }) |> then(combineLatest(signal, recentUsedEmoji(postbox: context.account.postbox)) |> map { matches, emojies -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
@@ -142,13 +143,15 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
             
             var inlineSignal: Signal<[(Peer, Double)], NoError> = .single([])
             if includeRecent {
-                inlineSignal = recentlyUsedInlineBots(postbox: context.account.postbox) |> take(1)
+                inlineSignal = context.engine.peers.recentlyUsedInlineBots() |> take(1) |> map {
+                    $0.map { ($0.0._asPeer(), $0.1) }
+                }
             }
             
             let members: Signal<[Peer], NoError> = searchPeerMembers(context: context, peerId: global.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: query)
             
             let participants = combineLatest(inlineSignal, members |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
-                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
+                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peerId: global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
                     let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
                         if entry.message.media.first is TelegramMediaAction {
                             return nil
@@ -230,8 +233,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                     signal = .single({ _ in return nil })
                 }
             }
-            
-            let participants = peerCommands(account: context.account, id: peer.id)
+            let participants = context.engine.peers.peerCommands(id: peer.id)
                 |> map { commands -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
                     let filteredCommands = commands.commands.filter { command in
                         if command.command.text.hasPrefix(normalizedQuery) {
@@ -265,11 +267,10 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                 signal = .single({ _ in return nil })
             }
         }
-        
-        let contextBot = resolvePeerByName(account: context.account, name: addressName)
-            |> mapToSignal { peerId -> Signal<Peer?, NoError> in
-                if let peerId = peerId {
-                    return context.account.postbox.loadedPeerWithId(peerId)
+        let contextBot = context.engine.peers.resolvePeerByName(name: addressName)
+            |> mapToSignal { peer -> Signal<Peer?, NoError> in
+                if let peer = peer {
+                    return context.account.postbox.loadedPeerWithId(peer._asPeer().id)
                         |> map { peer -> Peer? in
                             return peer
                         }
@@ -280,7 +281,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
             }
             |> mapToSignal { peer -> Signal<(ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult?, NoError> in
                 if let user = peer as? TelegramUser, let botInfo = user.botInfo, let _ = botInfo.inlinePlaceholder {
-                    let contextResults = requestChatContextResults(account: context.account, botId: user.id, peerId: chatPeer.id, query: query, offset: "")
+                    let contextResults = context.engine.messages.requestChatContextResults(botId: user.id, peerId: chatPeer.id, query: query, offset: "")
                         |> map { results -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
                             return { _ in
                                 return .contextRequestResult(user, results?.results)
@@ -316,7 +317,7 @@ private func makeInlineResult(_ inputQuery: ChatPresentationInputQuery, chatPres
                         
                         if let global = chatPresentationInterfaceState.peer {
                             return searchPeerMembers(context: context, peerId: global.id, chatLocation: chatPresentationInterfaceState.chatLocation, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
-                                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
+                                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peerId: global.id), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
                                     let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
                                         if entry.message.media.first is TelegramMediaAction {
                                             return nil
@@ -395,7 +396,7 @@ func chatContextQueryForSearchMention(chatLocations: [ChatLocation], _ inputQuer
         
         let participants: Signal<[Peer], NoError> = combineLatest(chatLocations.map { chatLocation in
             searchPeerMembers(context: context, peerId: chatLocation.peerId, chatLocation: chatLocation, query: normalizedQuery) |> take(1) |> mapToSignal { participants -> Signal<[Peer], NoError> in
-                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(chatLocation.peerId), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
+                return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peerId: chatLocation.peerId), count: 100, tagMask: nil, orderStatistics: [], additionalData: []) |> take(1) |> map { view in
                     let latestIds:[PeerId] = view.0.entries.reversed().compactMap({ entry in
                         if entry.message.media.first is TelegramMediaAction {
                             return nil
@@ -468,7 +469,7 @@ func chatContextQueryForSearchMention(chatLocations: [ChatLocation], _ inputQuer
                         return false
                     }
                 }
-                if peer.displayTitle == L10n.peerDeletedUser {
+                if peer.displayTitle == strings().peerDeletedUser {
                     return false
                 }
                 if peer.indexName.matchesByTokens(normalizedQuery) {
@@ -487,7 +488,7 @@ func chatContextQueryForSearchMention(chatLocations: [ChatLocation], _ inputQuer
         return (inputQuery, signal |> then(result))
     case let .emoji(query, firstWord):
         if !query.isEmpty {
-            let signal = context.sharedContext.inputSource.searchEmoji(postbox: context.account.postbox, sharedContext: context.sharedContext, query: query, completeMatch: query.length < 3, checkPrediction: firstWord) |> delay(firstWord ? 0.3 : 0, queue: .concurrentDefaultQueue())
+            let signal = context.sharedContext.inputSource.searchEmoji(postbox: context.account.postbox, engine: context.engine, sharedContext: context.sharedContext, query: query, completeMatch: query.length < 3, checkPrediction: firstWord) |> delay(firstWord ? 0.3 : 0, queue: .concurrentDefaultQueue())
             
             if firstWord {
                 return (inputQuery, .single({ _ in return nil }) |> then(combineLatest(signal, recentUsedEmoji(postbox: context.account.postbox)) |> map { matches, emojies -> (ChatPresentationInputQueryResult?) -> ChatPresentationInputQueryResult? in
@@ -658,7 +659,7 @@ private let dataDetector = try? NSDataDetector(types: NSTextCheckingResult.Check
                             }
                             
                             if canLoad {
-                               confirm(for: context.window, header: L10n.chatSecretChatPreviewHeader, information: L10n.chatSecretChatPreviewText, okTitle: L10n.chatSecretChatPreviewOK, cancelTitle: L10n.chatSecretChatPreviewNO, successHandler: { result in
+                               confirm(for: context.window, header: strings().chatSecretChatPreviewHeader, information: strings().chatSecretChatPreviewText, okTitle: strings().chatSecretChatPreviewOK, cancelTitle: strings().chatSecretChatPreviewNO, successHandler: { result in
                                     FastSettings.setSecretChatWebPreviewAvailable(for: context.account.id.int64, value: true)
                                     invoke(link)
                                }, cancelHandler: {

@@ -9,7 +9,7 @@
 import Cocoa
 import TGUIKit
 import TelegramCore
-import SyncCore
+
 import Postbox
 import SwiftSignalKit
 
@@ -68,7 +68,7 @@ func GroupsInCommonViewController(context: AccountContext, peerId: PeerId) -> Vi
     let actionsDisposable = DisposableSet()
     
     let arguments = GroupsInCommonArguments(context: context, open: { peerId in
-        context.sharedContext.bindings.rootNavigation().push(ChatAdditionController(context: context, chatLocation: .peer(peerId)))
+        context.bindings.rootNavigation().push(ChatAdditionController(context: context, chatLocation: .peer(peerId)))
     })
     
     let contextValue: Promise<GroupsInCommonContext> = Promise()
@@ -88,7 +88,7 @@ func GroupsInCommonViewController(context: AccountContext, peerId: PeerId) -> Vi
     let controller = InputDataController(dataSignal: dataSignal, title: "")
     controller.bar = .init(height: 0)
     
-    controller.contextOject = contextValue
+    controller.contextObject = contextValue
     
     controller.onDeinit = {
         actionsDisposable.dispose()

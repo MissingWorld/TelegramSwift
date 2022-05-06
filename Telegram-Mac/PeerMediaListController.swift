@@ -9,7 +9,7 @@
 import Cocoa
 import TGUIKit
 import TelegramCore
-import SyncCore
+import InAppSettings
 import Postbox
 import SwiftSignalKit
 
@@ -420,7 +420,7 @@ class PeerMediaListController: TableViewController, PeerMediaSearchable {
                     let searchMessagesLocation: SearchMessagesLocation
                     searchMessagesLocation = .peer(peerId: strongSelf.chatLocation.peerId, fromId: nil, tags: tagMask, topMsgId: nil, minDate: nil, maxDate: nil)
                     
-                    let signal = searchMessages(account: strongSelf.context.account, location: searchMessagesLocation, query: searchState.request, state: nil) |> deliverOnMainQueue |> map {$0.0.messages} |> map { messages -> PeerMediaUpdate in
+                    let signal = context.engine.messages.searchMessages(location: searchMessagesLocation, query: searchState.request, state: nil) |> deliverOnMainQueue |> map {$0.0.messages} |> map { messages -> PeerMediaUpdate in
                         return PeerMediaUpdate(messages: messages, updateType: .search, laterId: nil, earlierId: nil, searchState: searchState, contentSettings: context.contentSettings)
                     }
                     
@@ -477,7 +477,7 @@ class PeerMediaListController: TableViewController, PeerMediaSearchable {
             self.genericView.merge(with: values.transition)
             self.mediaSearchState.set(state)
             self.readyOnce()
-            if let controller = globalAudio, let header = self.navigationController?.header, header.needShown {
+            if let controller = context.audioPlayer, let header = self.navigationController?.header, header.needShown {
                 let tableView = (self.navigationController?.first {$0 is ChatController} as? ChatController)?.genericView.tableView
                 let object = InlineAudioPlayerView.ContextObject(controller: controller, context: context, tableView: tableView, supportTableView: self.genericView)
                 header.view.update(with: object)

@@ -429,6 +429,9 @@ func initialize() -> [String] {
     array.append("wallpaper_color_add")
     array.append("wallpaper_color_swap")
     array.append("wallpaper_color_rotate")
+    array.append("wallpaper_color_play")
+
+    
     
     array.append("login_cap")
     array.append("login_qr_cap")
@@ -571,6 +574,7 @@ func initialize() -> [String] {
     array.append("search_filter_files")
     array.append("search_filter_links")
     array.append("search_filter_music")
+    array.append("search_filter_downloads")
     array.append("search_filter_add_peer")
     array.append("search_filter_add_peer_active")
 
@@ -621,6 +625,9 @@ func initialize() -> [String] {
     array.append("profile_group_type")
     array.append("profile_group_destruct")
     array.append("profile_group_discussion")
+    
+    array.append("profile_requests")
+    array.append("profile_reactions")
 
     array.append("profile_removed")
     array.append("profile_links")
@@ -657,8 +664,77 @@ func initialize() -> [String] {
     array.append("audioplayer_speed_x1")
     array.append("audioplayer_speed_x2")
 
+    array.append("chat_info_voice_chat")
+    
+    array.append("chat_info_create_group")
+    array.append("chat_info_change_colors")
+
+    array.append("empty_chat_system")
+    array.append("empty_chat_dark")
+    array.append("empty_chat_light")
+    array.append("empty_chat_system_active")
+    array.append("empty_chat_dark_active")
+    array.append("empty_chat_light_active")
     
     
+    array.append("empty_chat_storage_clear")
+    array.append("empty_chat_storage_low")
+    array.append("empty_chat_storage_medium")
+    array.append("empty_chat_storage_high")
+    array.append("empty_chat_storage_low_active")
+    array.append("empty_chat_storage_medium_active")
+    array.append("empty_chat_storage_high_active")
+    
+    
+    array.append("empty_chat_stickers_none")
+    array.append("empty_chat_stickers_mysets")
+    array.append("empty_chat_stickers_allsets")
+    array.append("empty_chat_stickers_none_active")
+    array.append("empty_chat_stickers_mysets_active")
+    array.append("empty_chat_stickers_allsets_active")
+    
+    array.append("chat_action_dismiss")
+    array.append("chat_action_edit_message")
+    array.append("chat_action_forward_message")
+    array.append("chat_action_reply_message")
+    array.append("chat_action_url_preview")
+    
+    array.append("chat_action_menu_update_chat")
+    array.append("chat_action_menu_selected")
+    
+    
+    array.append("widget_peers_favorite")
+    array.append("widget_peers_recent")
+    array.append("widget_peers_both")
+    array.append("widget_peers_favorite_active")
+    array.append("widget_peers_recent_active")
+    array.append("widget_peers_both_active")
+    
+    array.append("chat_reactions_add")
+    array.append("chat_reactions_add_bubble")
+    array.append("chat_reactions_add_active")
+
+    
+    array.append("reactions_badge")
+    array.append("reactions_badge_active")
+
+    array.append("reactions_badge_archive")
+    array.append("reactions_badge_archive_active")
+
+    
+    array.append("chat_reactions_badge")
+    array.append("chat_reactions_badge_active")
+    
+    
+    array.append("gallery_pip_close")
+    array.append("gallery_pip_muted")
+    array.append("gallery_pip_unmuted")
+    array.append("gallery_pip_out")
+    array.append("gallery_pip_pause")
+    array.append("gallery_pip_play")
+    
+    array.append("notification_sound_add")
+
     return array
 }
 //swift ./tools/generate-images.swift
@@ -670,16 +746,17 @@ func generateClass() -> String {
     
     var lines:[String] = []
     lines.append("import SwiftSignalKit")
+    lines.append("import AppKit")
     lines.append("")
 
-    lines.append("final class TelegramIconsTheme {")
+    lines.append("public final class TelegramIconsTheme {")
     
     lines.append("  private var cached:Atomic<[String: CGImage]> = Atomic(value: [:])")
     lines.append("  private var cachedWithInset:Atomic<[String: (CGImage, NSEdgeInsets)]> = Atomic(value: [:])")
     lines.append("")
     for item in items {
         if item.hasSuffix("_withInset") {
-            lines.append("  var \(item): (CGImage, NSEdgeInsets) {")
+            lines.append("  public var \(item): (CGImage, NSEdgeInsets) {")
             lines.append("      if let image = cachedWithInset.with({ $0[\"\(item)\"] }) {")
             lines.append("          return image")
             lines.append("      } else {")
@@ -695,7 +772,7 @@ func generateClass() -> String {
             lines.append("      }")
             lines.append("  }")
         } else {
-            lines.append("  var \(item): CGImage {")
+            lines.append("  public var \(item): CGImage {")
             lines.append("      if let image = cached.with({ $0[\"\(item)\"] }) {")
             lines.append("          return image")
             lines.append("      } else {")
@@ -725,7 +802,7 @@ func generateClass() -> String {
     
     lines.append("")
     
-    lines.append("  init(")
+    lines.append("  public init(")
     for item in items {
         if item != items.last {
             if item.hasSuffix("_withInset") {
@@ -760,4 +837,4 @@ func generateClass() -> String {
 }
 
 print(FileManager.default.currentDirectoryPath)
-try! generateClass().write(toFile: FileManager.default.currentDirectoryPath + "/Telegram-Mac/TelegramIconsTheme.swift", atomically: true, encoding: .utf8)
+try! generateClass().write(toFile: FileManager.default.currentDirectoryPath + "/packages/TelegramIconsTheme/Sources/TelegramIconsTheme.swift", atomically: true, encoding: .utf8)

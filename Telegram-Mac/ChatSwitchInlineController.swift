@@ -10,7 +10,7 @@ import Cocoa
 import TGUIKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 import SwiftSignalKit
 
 
@@ -29,11 +29,11 @@ class ChatSwitchInlineController: ChatController {
     }
     
     override open func backSettings() -> (String,CGImage?) {
-        return (L10n.navigationCancel,nil)
+        return (strings().navigationCancel,nil)
     }
     
-    override func applyTransition(_ transition:TableUpdateTransition, initialData:ChatHistoryCombinedInitialData, isLoading: Bool) {
-        super.applyTransition(transition, initialData: initialData, isLoading: isLoading)
+    override func applyTransition(_ transition:TableUpdateTransition, initialData:ChatHistoryCombinedInitialData, isLoading: Bool, processedView: ChatHistoryView) {
+        super.applyTransition(transition, initialData: initialData, isLoading: isLoading, processedView: processedView)
         
         if case let .none(interface) = transition.state, let _ = interface {
             for (_, item) in transition.inserted {

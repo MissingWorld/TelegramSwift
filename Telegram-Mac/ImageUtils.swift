@@ -9,10 +9,10 @@
 import Cocoa
 import Postbox
 import TelegramCore
-import SyncCore
+import FastBlur
 import SwiftSignalKit
 import TGUIKit
-import SyncCore
+import FastBlur
 
 let graphicsThreadPool = ThreadPool(threadCount: 5, threadPriority: 1)
 
@@ -34,33 +34,33 @@ private func peerImage(account: Account, peer: Peer, displayDimensions: NSSize, 
                     let resourceData = account.postbox.mediaBox.resourceData(representation.resource, attemptSynchronously: synchronousLoad)
                     let imageData = resourceData
                         |> take(1)
-                        |> mapToSignal { maybeData -> Signal<(Data?, Bool), NoError> in
+                        |> mapToSignal { maybeData -> Signal<(Data?, Bool, Bool), NoError> in
                             return autoreleasepool {
                                if maybeData.complete {
-                                   return .single((try? Data(contentsOf: URL(fileURLWithPath: maybeData.path)), false))
+                                   return .single((try? Data(contentsOf: URL(fileURLWithPath: maybeData.path)), false, false))
                                } else {
                                    return Signal { subscriber in
                                                 
                                        if let data = representation.immediateThumbnailData {
-                                           subscriber.putNext((decodeTinyThumbnail(data: data), false))
+                                           subscriber.putNext((decodeTinyThumbnail(data: data), false, true))
                                        }
+                                    
+                                       let resourceData = account.postbox.mediaBox.resourceData(representation.resource, attemptSynchronously: synchronousLoad)
                                     
                                        let resourceDataDisposable = resourceData.start(next: { data in
                                            if data.complete {
-                                               subscriber.putNext((try? Data(contentsOf: URL(fileURLWithPath: data.path)), true))
+                                               subscriber.putNext((try? Data(contentsOf: URL(fileURLWithPath: data.path)), true, false))
                                                subscriber.putCompletion()
-                                           }
-                                       }, error: { error in
-                                           subscriber.putError(error)
+                                           } 
                                        }, completed: {
                                            subscriber.putCompletion()
                                        })
                                        
                                        let fetchedDataDisposable: Disposable
-                                       if let reference = PeerReference(peer) {
+                                       if let message = message, message.author?.id == peer.id {
+                                            fetchedDataDisposable = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: MediaResourceReference.messageAuthorAvatar(message: MessageReference(message), resource: representation.resource), statsCategory: .image).start()
+                                        } else if let reference = PeerReference(peer) {
                                            fetchedDataDisposable = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: MediaResourceReference.avatar(peer: reference, resource: representation.resource), statsCategory: .image).start()
-                                       } else if let message = message {
-                                           fetchedDataDisposable = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: MediaResourceReference.messageAuthorAvatar(message: MessageReference(message), resource: representation.resource), statsCategory: .image).start()
                                        } else {
                                            fetchedDataDisposable = fetchedMediaResource(mediaBox: account.postbox.mediaBox, reference: MediaResourceReference.standalone(resource: representation.resource), statsCategory: .image).start()
                                        }
@@ -78,7 +78,7 @@ private func peerImage(account: Account, peer: Peer, displayDimensions: NSSize, 
                         if let image = capHolder[key] {
                             return .single((image, false))
                         } else {
-                            let size = NSMakeSize(max(30, displayDimensions.width), max(30, displayDimensions.height))
+                            let size = NSMakeSize(max(15, displayDimensions.width), max(15, displayDimensions.height))
                             capHolder[key] = generateAvatarPlaceholder(foregroundColor: theme.colors.grayBackground, size: size)
                             return .single((capHolder[key]!, false))
                         }
@@ -86,21 +86,37 @@ private func peerImage(account: Account, peer: Peer, displayDimensions: NSSize, 
                     
                     let loadDataSignal = synchronousLoad ? imageData : imageData |> deliverOn(graphicsThreadPool)
                     
-                    let img = loadDataSignal |> mapToSignal { data, animated -> Signal<(CGImage?, Bool), NoError> in
+                    let img = loadDataSignal |> mapToSignal { data, animated, tiny -> Signal<(CGImage?, Bool), NoError> in
                             
-                            let image:CGImage?
-                            if let data = data {
-                                image = roundImage(data, displayDimensions, scale:scale)
-                            } else {
-                                image = nil
+                        var image:CGImage?
+                        if let data = data {
+                            image = roundImage(data, displayDimensions, scale: scale)
+                        } else {
+                            image = nil
+                        }
+                        #if !SHARE
+                        if tiny, let img = image {
+                            let size = img.size
+                            let ctx = DrawingContext(size: img.size, scale: 1.0)
+                            ctx.withContext { ctx in
+                                ctx.clear(size.bounds)
+                                ctx.draw(img, in: size.bounds)
                             }
-                            if let image = image {
-                                return cachePeerPhoto(image: image, peerId: peer.id, representation: representation, size: displayDimensions, scale: scale) |> map {
-                                    return (image, animated)
-                                }
-                            } else {
+                            telegramFastBlurMore(Int32(size.width), Int32(size.height), Int32(ctx.bytesPerRow), ctx.bytes)
+                            
+                            image = ctx.generateImage()
+                        }
+                        #endif
+                        if let image = image {
+                            if tiny {
                                 return .single((image, animated))
                             }
+                            return cachePeerPhoto(image: image, peerId: peer.id, representation: representation, size: displayDimensions, scale: scale) |> map {
+                                return (image, animated)
+                            }
+                        } else {
+                            return .single((image, animated))
+                        }
                             
                     }
                     if genCap {
@@ -122,7 +138,7 @@ private func peerImage(account: Account, peer: Peer, displayDimensions: NSSize, 
         }
         
         
-        let color = theme.colors.peerColors(Int(abs(peer.id.id._internalGetInt32Value() % 7)))
+        let color = theme.colors.peerColors(Int(abs(peer.id.id._internalGetInt64Value() % 7)))
         
         
         let symbol = letters.reduce("", { (current, letter) -> String in
@@ -155,48 +171,6 @@ func peerAvatarImage(account: Account, photo: PeerPhoto, displayDimensions: CGSi
         return peerImage(account: account, peer: peer, displayDimensions: displayDimensions, representation: representation, message: message, displayLetters: displayLetters, font: font, scale: scale, genCap: genCap, synchronousLoad: synchronousLoad)
     }
 }
-
-/*
- case let .group(peerIds, representations, displayLetters):
- var combine:[Signal<(CGImage?, Bool), NoError>] = []
- let inGroupSize = NSMakeSize(displayDimensions.width / 2 - 2, displayDimensions.height / 2 - 2)
- for peerId in peerIds {
- let representation: TelegramMediaImageRepresentation? = representations[peerId]
- let letters = displayLetters[peerId] ?? ["", ""]
- combine.append(peerImage(account: account, peerId: peerId, displayDimensions: inGroupSize, representation: representation, displayLetters: letters, font: font, scale: scale, genCap: genCap, synchronousLoad: synchronousLoad))
- }
- return combineLatest(combine) |> deliverOn(graphicsThreadPool) |> map { images -> (CGImage?, Bool) in
- var animated: Bool = false
- for image in images {
- if image.1 {
- animated = true
- break
- }
- }
- return (generateImage(displayDimensions, rotatedContext: { size, ctx in
- var x: CGFloat = 0
- var y: CGFloat = 0
- ctx.clear(NSMakeRect(0, 0, size.width, size.height))
- for i in 0 ..< images.count {
- let image = images[i].0
- if let image = image {
- let img = generateImage(image.size, rotatedContext: { size, ctx in
- ctx.clear(NSMakeRect(0, 0, size.width, size.height))
- ctx.draw(image, in: NSMakeRect(0, 0, image.size.width, image.size.height))
- })!
- ctx.draw(img, in: NSMakeRect(x, y, inGroupSize.width, inGroupSize.height))
- }
- x += inGroupSize.width + 4
- if (i + 1) % 2 == 0 {
- x = 0
- y += inGroupSize.height + 4
- }
- }
- 
- }), animated)
- 
- }
- */
 
 enum EmptyAvatartType {
     case peer(colors:(top:NSColor, bottom: NSColor), letter: [String], font: NSFont)
@@ -283,7 +257,7 @@ func generateEmptyRoundAvatar(_ displayDimensions:NSSize, font: NSFont, account:
     return Signal { subscriber in
         let letters = peer.displayLetters
         
-        let color = theme.colors.peerColors(Int(abs(peer.id.id._internalGetInt32Value() % 7)))
+        let color = theme.colors.peerColors(Int(abs(peer.id.id._internalGetInt64Value() % 7)))
         
         let image = generateImage(displayDimensions, contextGenerator: { (size, ctx) in
             ctx.clear(NSMakeRect(0, 0, size.width, size.height))

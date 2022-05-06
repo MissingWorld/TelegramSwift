@@ -9,7 +9,7 @@
  import Cocoa
  import TGUIKit
  import TelegramCore
- import SyncCore
+ 
  import SwiftSignalKit
  import Postbox
  
@@ -366,28 +366,28 @@
  private extension PeerMediaCollectionMode {
     var title: String {
         if self == .members {
-            return L10n.peerMediaMembers
+            return strings().peerMediaMembers
         }
         if self == .photoOrVideo {
-            return L10n.peerMediaMedia
+            return strings().peerMediaMedia
         }
         if self == .file {
-            return L10n.peerMediaFiles
+            return strings().peerMediaFiles
         }
         if self == .webpage {
-            return L10n.peerMediaLinks
+            return strings().peerMediaLinks
         }
         if self.tagsValue == .music {
-            return L10n.peerMediaMusic
+            return strings().peerMediaMusic
         }
         if self == .voice {
-            return L10n.peerMediaVoice
+            return strings().peerMediaVoice
         }
         if self == .commonGroups {
-            return L10n.peerMediaCommonGroups
+            return strings().peerMediaCommonGroups
         }
         if self == .gifs {
-            return L10n.peerMediaGifs
+            return strings().peerMediaGifs
         }
         return ""
     }
@@ -434,9 +434,9 @@
                 if let cachedData = peerView.cachedData as? CachedChannelData {
                     let onlineMemberCount:Signal<Int32?, NoError>
                     if (cachedData.participantsSummary.memberCount ?? 0) > 200 {
-                        onlineMemberCount = context.peerChannelMemberCategoriesContextsManager.recentOnline(postbox: context.account.postbox, network: context.account.network, accountPeerId: context.peerId, peerId: self.peerId)  |> map(Optional.init) |> deliverOnMainQueue
+                        onlineMemberCount = context.peerChannelMemberCategoriesContextsManager.recentOnline(peerId: self.peerId)  |> map(Optional.init) |> deliverOnMainQueue
                     } else {
-                        onlineMemberCount = context.peerChannelMemberCategoriesContextsManager.recentOnlineSmall(postbox: context.account.postbox, network: context.account.network, accountPeerId: context.peerId, peerId: self.peerId)  |> map(Optional.init) |> deliverOnMainQueue
+                        onlineMemberCount = context.peerChannelMemberCategoriesContextsManager.recentOnlineSmall(peerId: self.peerId)  |> map(Optional.init) |> deliverOnMainQueue
                     }
                     
                     self.onlineMemberCountDisposable.set(onlineMemberCount.start(next: { [weak self] count in
@@ -497,7 +497,7 @@
     private let externalDisposable = MetaDisposable()
     private var currentController: ViewController?
     
-    
+     private var sparseCalendar: SparseMessageCalendar?
     
     var currentMainTableView:((TableView?, Bool, Bool)->Void)? = nil {
         didSet {
@@ -558,7 +558,7 @@
     }
 
     var unableToHide: Bool {
-        return self.genericView.activePanel is SearchContainerView || self.state != .Normal
+        return self.genericView.activePanel is SearchContainerView || self.state != .Normal || !onTheTop
     }
     
     override func viewDidAppear(_ animated: Bool) {
@@ -605,6 +605,101 @@
         navigationController.swapNavigationBar(leftView: nil, centerView: nil, rightView: self.rightBarView, animation: .none)
 
     }
+     
+     private var editButton:ImageButton? = nil
+     private var doneButton:TitleButton? = nil
+     
+     override func requestUpdateRightBar() {
+         super.requestUpdateRightBar()
+         editButton?.style = navigationButtonStyle
+         editButton?.set(image: theme.icons.chatActions, for: .Normal)
+         editButton?.set(image: theme.icons.chatActionsActive, for: .Highlight)
+
+         
+         editButton?.setFrameSize(70, 50)
+         editButton?.center()
+         doneButton?.set(color: theme.colors.accent, for: .Normal)
+         doneButton?.style = navigationButtonStyle
+     }
+     
+     
+     override func getRightBarViewOnce() -> BarView {
+         let back = BarView(70, controller: self) //MajorBackNavigationBar(self, account: account, excludePeerId: peerId)
+         
+         let editButton = ImageButton()
+        // editButton.disableActions()
+         back.addSubview(editButton)
+         
+         self.editButton = editButton
+ //
+         let doneButton = TitleButton()
+       //  doneButton.disableActions()
+         doneButton.set(font: .medium(.text), for: .Normal)
+         doneButton.set(text: strings().navigationDone, for: .Normal)
+         
+         
+         _ = doneButton.sizeToFit()
+         back.addSubview(doneButton)
+         doneButton.center()
+         
+         self.doneButton = doneButton
+
+         
+         doneButton.set(handler: { [weak self] _ in
+             self?.changeState()
+         }, for: .Click)
+         
+         doneButton.isHidden = true
+         
+         
+         let context = self.context
+         editButton.contextMenu = { [weak self] in
+             
+             let mode = self?.mode
+             
+             var items:[ContextMenuItem] = []
+             items.append(ContextMenuItem(strings().chatContextEdit1, handler: { [weak self] in
+                 self?.changeState()
+             }, itemImage: MenuAnimation.menu_edit.value))
+             
+             if mode == .photoOrVideo {
+                 let context = context
+                 items.append(ContextMenuItem(strings().peerMediaCalendarTitle, handler: { [weak self] in
+                     guard let sparseCalendar = self?.sparseCalendar else {
+                         return
+                     }
+                     showModal(with: ChatCalendarModalController(context: context, sparseCalendar: sparseCalendar, jumpTo: { [weak self] message in
+                         self?.mediaGrid.jumpTo(message)
+                     }), for: context.window)
+                 }, itemImage: MenuAnimation.menu_calendar.value))
+             }
+            
+             let menu = ContextMenu(betterInside: true)
+             
+             for item in items {
+                 menu.addItem(item)
+             }
+             
+             return menu
+         }
+
+         requestUpdateRightBar()
+         return back
+     }
+
+     private func showRightControls() {
+         switch state {
+         case .Normal:
+             if let button = editButton {
+                
+             }
+         case .Edit:
+             self.changeState()
+         case .Some:
+             break
+         }
+     }
+     
     
     override func viewDidDisappear(_ animated: Bool) {
         super.viewDidDisappear(animated)
@@ -653,15 +748,18 @@
                     loadSelectionMessagesDisposable.set((context.account.postbox.messagesAtIds(ids) |> deliverOnMainQueue).start( next:{ [weak self] messages in
                         var canDelete:Bool = !ids.isEmpty
                         var canForward:Bool = !ids.isEmpty
-                        for message in messages {
-                            if !canDeleteMessage(message, account: context.account, mode: .history) {
-                                canDelete = false
+                        if let interactions = self?.interactions {
+                            for message in messages {
+                                if !canDeleteMessage(message, account: context.account, mode: .history) {
+                                    canDelete = false
+                                }
+                                if !canForwardMessage(message, chatInteraction: interactions) {
+                                    canForward = false
+                                }
                             }
-                            if !canForwardMessage(message, account: context.account) {
-                                canForward = false
-                            }
+                            interactions.update({$0.withUpdatedBasicActions((canDelete, canForward))})
                         }
-                        self?.interactions.update({$0.withUpdatedBasicActions((canDelete, canForward))})
+                       
                     }))
                 } else {
                     interactions.update({$0.withUpdatedBasicActions((false, false))})
@@ -671,6 +769,9 @@
             if (value.state == .selecting) != (oldValue.state == .selecting) {
                 self.state = value.state == .selecting ? .Edit : .Normal
                 
+                doneButton?.isHidden = value.state != .selecting
+                editButton?.isHidden = value.state == .selecting
+
                 genericView.changeState(selectState: value.state == .selecting && self.mode != .members, animated: animated)
             }
             
@@ -687,6 +788,10 @@
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        
+        self.sparseCalendar = context.engine.messages.sparseMessageCalendar(peerId: peerId, tag: [.photoOrVideo])
+
+        
         genericView.updateInteraction(interactions)
         
         if externalSearchData != nil {
@@ -705,10 +810,10 @@
         
         membersTab = context.account.postbox.peerView(id: peerId) |> map { view -> (exist: Bool, loaded: Bool) in
             if let cachedData = view.cachedData as? CachedGroupData {
-                return (exist: Int(cachedData.participants?.participants.count ?? 0 ) > minumimUsersBlock, loaded: true)
+                return (exist: true, loaded: true)
             } else if let cachedData = view.cachedData as? CachedChannelData {
                 if let peer = peerViewMainPeer(view), peer.isSupergroup {
-                    return (exist: Int32(cachedData.participantsSummary.memberCount ?? 0) > minumimUsersBlock, loaded: true)
+                    return (exist: true, loaded: true)
                 } else {
                     return (exist: false, loaded: true)
                 }
@@ -734,7 +839,7 @@
         
         
         let tabItems: [Signal<(tag: PeerMediaCollectionMode, exists: Bool, hasLoaded: Bool), NoError>] = self.tagsList.filter { !$0.tagsValue.isEmpty }.map { tags -> Signal<(tag: PeerMediaCollectionMode, exists: Bool, hasLoaded: Bool), NoError> in
-            return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peerId), count: 3, tagMask: tags.tagsValue)
+            return context.account.viewTracker.aroundMessageOfInterestHistoryViewForLocation(.peer(peerId: peerId), count: 3, tagMask: tags.tagsValue)
             |> map { (view, _, _) -> (tag: PeerMediaCollectionMode, exists: Bool, hasLoaded: Bool) in
                 let hasLoaded = view.entries.count >= 3 || (!view.isLoading)
                 return (tag: tags, exists: !view.entries.isEmpty, hasLoaded: hasLoaded)
@@ -855,7 +960,7 @@
         
         
         interactions.forwardMessages = { messageIds in
-            showModal(with: ShareModalController(ForwardMessagesObject(context, messageIds: messageIds)), for: mainWindow)
+            showModal(with: ShareModalController(ForwardMessagesObject(context, messageIds: messageIds)), for: context.window)
         }
         
         interactions.focusMessageId = { [weak self] _, focusMessageId, animated in
@@ -885,13 +990,18 @@
         
         interactions.deleteMessages = { [weak self] messageIds in
             if let strongSelf = self, let peer = strongSelf.peer {
-                let channelAdmin:Signal<[ChannelParticipant]?, NoError> = peer.isSupergroup ? channelAdmins(account: context.account, peerId: strongSelf.interactions.peerId)
-                    |> `catch` {_ in .complete()} |> map { admins -> [ChannelParticipant]? in
-                        return admins.map({$0.participant})
-                    } : .single(nil)
+                
+                let adminsPromise = ValuePromise<[RenderedChannelParticipant]>([])
+                _ = context.peerChannelMemberCategoriesContextsManager.admins(peerId: peerId, updated: { membersState in
+                    if case .loading = membersState.loadingState, membersState.list.isEmpty {
+                        adminsPromise.set([])
+                    } else {
+                        adminsPromise.set(membersState.list)
+                    }
+                })
                 
                 
-                self?.messagesActionDisposable.set(combineLatest(context.account.postbox.messagesAtIds(messageIds) |> deliverOnMainQueue, channelAdmin |> deliverOnMainQueue).start( next:{ [weak strongSelf] messages, admins in
+                self?.messagesActionDisposable.set(combineLatest(queue: .mainQueue(), context.account.postbox.messagesAtIds(messageIds), adminsPromise.get()).start( next:{ [weak strongSelf] messages, admins in
                     if let strongSelf = strongSelf {
                         var canDelete:Bool = true
                         var canDeleteForEveryone = true
@@ -930,28 +1040,30 @@
                             return
                         }
                         
+                        let context = strongSelf.context
+                        
                         if canDelete {
-                            let isAdmin = admins?.filter({$0.peerId == messages[0].author?.id}).first != nil
+                            let isAdmin = admins.filter({$0.peer.id == messages[0].author?.id}).first != nil
                             if mustManageDeleteMessages(messages, for: peer, account: strongSelf.context.account), let memberId = messages[0].author?.id, !isAdmin {
                                 
-                                let options:[ModalOptionSet] = [ModalOptionSet(title: L10n.supergroupDeleteRestrictionDeleteMessage, selected: true, editable: true),
-                                                                ModalOptionSet(title: L10n.supergroupDeleteRestrictionBanUser, selected: false, editable: true),
-                                                                ModalOptionSet(title: L10n.supergroupDeleteRestrictionReportSpam, selected: false, editable: true),
-                                                                ModalOptionSet(title: L10n.supergroupDeleteRestrictionDeleteAllMessages, selected: false, editable: true)]
-                                showModal(with: ModalOptionSetController(context: context, options: options, actionText: (L10n.modalOK, theme.colors.accent), title: L10n.supergroupDeleteRestrictionTitle, result: { [weak strongSelf] result in
+                                let options:[ModalOptionSet] = [ModalOptionSet(title: strings().supergroupDeleteRestrictionDeleteMessage, selected: true, editable: true),
+                                                                ModalOptionSet(title: strings().supergroupDeleteRestrictionBanUser, selected: false, editable: true),
+                                                                ModalOptionSet(title: strings().supergroupDeleteRestrictionReportSpam, selected: false, editable: true),
+                                                                ModalOptionSet(title: strings().supergroupDeleteRestrictionDeleteAllMessages, selected: false, editable: true)]
+                                showModal(with: ModalOptionSetController(context: context, options: options, actionText: (strings().modalOK, theme.colors.accent), title: strings().supergroupDeleteRestrictionTitle, result: { [weak strongSelf] result in
                                     
                                     var signals:[Signal<Void, NoError>] = []
                                     if result[0] == .selected {
-                                        signals.append(deleteMessagesInteractively(account: context.account, messageIds: messages.map {$0.id}, type: .forEveryone))
+                                        signals.append(context.engine.messages.deleteMessagesInteractively(messageIds: messages.map {$0.id}, type: .forEveryone))
                                     }
                                     if result[1] == .selected {
-                                        signals.append(context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(account: context.account, peerId: peer.id, memberId: memberId, bannedRights: TelegramChatBannedRights(flags: [.banReadMessages], untilDate: Int32.max)))
+                                        signals.append(context.peerChannelMemberCategoriesContextsManager.updateMemberBannedRights(peerId: peer.id, memberId: memberId, bannedRights: TelegramChatBannedRights(flags: [.banReadMessages], untilDate: Int32.max)))
                                     }
                                     if result[2] == .selected {
-                                        signals.append(reportPeerMessages(account: context.account, messageIds: messageIds, reason: .spam, message: ""))
+                                        signals.append(context.engine.peers.reportPeerMessages(messageIds: messageIds, reason: .spam, message: ""))
                                     }
                                     if result[3] == .selected {
-                                        signals.append(clearAuthorHistory(account: context.account, peerId: peer.id, memberId: memberId))
+                                        signals.append(context.engine.messages.clearAuthorHistory(peerId: peer.id, memberId: memberId))
                                     }
                                     
                                     _ = showModalProgress(signal: combineLatest(signals), for: context.window).start()
@@ -959,9 +1071,9 @@
                                     
                                 }), for: context.window)
                             } else {
-                                let thrid:String? = (canDeleteForEveryone ? peer.isUser ? L10n.chatMessageDeleteForMeAndPerson(peer.compactDisplayTitle) : L10n.chatConfirmDeleteMessagesForEveryone : nil)
+                                let thrid:String? = (canDeleteForEveryone ? peer.isUser ? strings().chatMessageDeleteForMeAndPerson(peer.compactDisplayTitle) : strings().chatConfirmDeleteMessagesForEveryone : nil)
                                 
-                                modernConfirm(for: context.window, account: context.account, peerId: nil, header: thrid == nil ? L10n.chatConfirmActionUndonable : L10n.chatConfirmDeleteMessages1Countable(messages.count), information: thrid == nil ? _mustDeleteForEveryoneMessage ? L10n.chatConfirmDeleteForEveryoneCountable(messages.count) : L10n.chatConfirmDeleteMessages1Countable(messages.count) : nil, okTitle: L10n.confirmDelete, thridTitle: thrid, successHandler: { [weak strongSelf] result in
+                                modernConfirm(for: context.window, account: context.account, peerId: nil, header: thrid == nil ? strings().chatConfirmActionUndonable : strings().chatConfirmDeleteMessages1Countable(messages.count), information: thrid == nil ? _mustDeleteForEveryoneMessage ? strings().chatConfirmDeleteForEveryoneCountable(messages.count) : strings().chatConfirmDeleteMessages1Countable(messages.count) : nil, okTitle: strings().confirmDelete, thridTitle: thrid, successHandler: { [weak strongSelf] result in
                                     
                                     guard let `strongSelf` = strongSelf else {
                                         return
@@ -973,7 +1085,7 @@
                                     case .thrid:
                                         type = .forEveryone
                                     }
-                                    _ = deleteMessagesInteractively(account: strongSelf.context.account, messageIds: messageIds, type: type).start()
+                                    _ = context.engine.messages.deleteMessagesInteractively(messageIds: messageIds, type: type).start()
                                     strongSelf.interactions.update({$0.withoutSelectionState()})
                                 })
                             }
@@ -1142,7 +1254,6 @@
                 controller.updateLocalizationAndTheme(theme: theme)
             }
         }
-        
     }
     
     override public func update(with state:ViewControllerState) -> Void {
@@ -1152,6 +1263,12 @@
     
     override func escapeKeyAction() -> KeyHandlerResult {
         if genericView.searchPanelView != nil {
+            if self.mode == .photoOrVideo {
+                if let currentController = currentController as? PeerMediaPhotosController {
+                    currentController.toggleSearch()
+                    return .invoked
+                }
+            }
             self.listControllers[self.currentTagListIndex].toggleSearch()
             return .invoked
         } else if interactions.presentation.state == .selecting {
@@ -1161,15 +1278,24 @@
             return super.escapeKeyAction()
         }
     }
+     
+     var onTheTop: Bool {
+         switch self.mode {
+         case .photoOrVideo:
+             return self.mediaGrid.onTheTop
+         default:
+             return true
+         }
+     }
     
     private var centerBar: SearchTitleBarView {
         return centerBarView as! SearchTitleBarView
     }
     
     private func searchGroupUsers() {
-        _ = (selectModalPeers(window: context.window, account: context.account, title: L10n.selectPeersTitleSearchMembers, behavior: peerId.namespace == Namespaces.Peer.CloudGroup ? SelectGroupMembersBehavior(peerId: peerId, limit: 1, settings: []) : SelectChannelMembersBehavior(peerId: peerId, peerChannelMemberContextsManager: context.peerChannelMemberCategoriesContextsManager, limit: 1, settings: [])) |> deliverOnMainQueue |> map {$0.first}).start(next: { [weak self] peerId in
+        _ = (selectModalPeers(window: context.window, context: context, title: strings().selectPeersTitleSearchMembers, behavior: peerId.namespace == Namespaces.Peer.CloudGroup ? SelectGroupMembersBehavior(peerId: peerId, limit: 1, settings: []) : SelectChannelMembersBehavior(peerId: peerId, peerChannelMemberContextsManager: context.peerChannelMemberCategoriesContextsManager, limit: 1, settings: [])) |> deliverOnMainQueue |> map {$0.first}).start(next: { [weak self] peerId in
             if let peerId = peerId, let context = self?.context {
-                context.sharedContext.bindings.rootNavigation().push(PeerInfoController(context: context, peerId: peerId))
+                context.bindings.rootNavigation().push(PeerInfoController(context: context, peerId: peerId))
             }
         })
     }
@@ -1218,19 +1344,7 @@
     override func initializer() -> PeerMediaContainerView {
         return PeerMediaContainerView(frame: initializationRect, isSegmentHidden: self.externalSearchData != nil)
     }
-    
-    override func navigationHeaderDidNoticeAnimation(_ current: CGFloat, _ previous: CGFloat, _ animated: Bool) -> () -> Void {
-        for mediaList in listControllers {
-            if mediaList.view.superview != nil {
-                return mediaList.navigationHeaderDidNoticeAnimation(current, previous, animated)
-            }
-        }
-        
-        if mediaGrid.view.superview != nil {
-            return mediaGrid.navigationHeaderDidNoticeAnimation(current, previous, animated)
-        }
-        return {}
-    }
+
     
  }
  

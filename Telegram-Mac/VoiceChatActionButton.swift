@@ -11,7 +11,7 @@ import TGUIKit
 import SwiftSignalKit
 
 private let white = NSColor(rgb: 0xffffff)
-private let greyColor = NSColor(rgb: 0x2c2c2e)
+private let greyColor = GroupCallTheme.speakDisabledColor
 private let secondaryGreyColor = NSColor(rgb: 0x1c1c1e)
 private let blue = NSColor(rgb: 0x0078ff)
 private let lightBlue = NSColor(rgb: 0x59c7f8)
@@ -177,6 +177,7 @@ final class VoiceChatActionButtonBackgroundView: View {
     
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+//        isCurrentlyInHierarchy = window != nil
         if let window = window as? Window {
             occlusionDisposable.set(window.takeOcclusionState.start(next: { [weak self] value in
                 self?.isCurrentlyInHierarchy = value.contains(.visible)

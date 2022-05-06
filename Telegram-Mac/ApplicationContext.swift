@@ -3,8 +3,8 @@ import TGUIKit
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
-
+import Localization
+import InAppSettings
 import IOKit
 
 private final class AuthModalController : ModalController {
@@ -44,18 +44,14 @@ final class UnauthorizedApplicationContext {
 
         
         window.maxSize = NSMakeSize(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
-        window.minSize = NSMakeSize(380, 500)
-        
+        window.minSize = NSMakeSize(380, 550)
         
         updatesDisposable.add(managedAppConfigurationUpdates(accountManager: sharedContext.accountManager, network: account.network).start())
+                        
         
-        if !window.initFromSaver {
-            window.setFrame(NSMakeRect(0, 0, 800, 650), display: true)
-            window.center()
-        }
-        
-        if window.frame.height < window.minSize.height {
+        if window.frame.height < window.minSize.height || window.frame.width < window.minSize.width {
             window.setFrame(NSMakeRect(window.frame.minX, window.frame.minY, window.minSize.width, window.minSize.height), display: true)
+            window.center()
         }
         
         self.account = account
@@ -198,6 +194,9 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             window.center()
         }
         
+        window.maxSize = NSMakeSize(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
+        window.minSize = NSMakeSize(380, 550)
+
         
         context.account.importableContacts.set(.single([:]))
         
@@ -253,7 +252,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         
         updatesDisposable.set(managedAppConfigurationUpdates(accountManager: context.sharedContext.accountManager, network: context.account.network).start())
         
-        context.sharedContext.bindings = AccountContextBindings(rootNavigation: { [weak self] () -> MajorNavigationController in
+        context.bindings = AccountContextBindings(rootNavigation: { [weak self] () -> MajorNavigationController in
             guard let `self` = self else {
                 return MajorNavigationController(ViewController.self, ViewController(), window)
             }
@@ -291,16 +290,12 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             self?.view.splitView.needFullsize()
         }, displayUpgradeProgress: { progress in
                 
-        }, callSession: { [weak self] in
-            return self?.rightController.callHeader?.contextObject as? PCallSession
-        }, groupCall: { [weak self] in
-            return self?.rightController.callHeader?.contextObject as? GroupCallContext
         })
         
         
         termDisposable.set((context.account.stateManager.termsOfServiceUpdate |> deliverOnMainQueue).start(next: { terms in
             if let terms = terms {
-                showModal(with: TermsModalController(context, terms: terms), for: mainWindow)
+                showModal(with: TermsModalController(context, terms: terms), for: context.window)
             } else {
                 closeModal(TermsModalController.self)
             }
@@ -338,8 +333,8 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
                 alert.informativeText = text.text
 
                 if text.isDropAuth {
-                    alert.addButton(withTitle: L10n.editAccountLogout)
-                    alert.addButton(withTitle: L10n.modalCancel)
+                    alert.addButton(withTitle: strings().editAccountLogout)
+                    alert.addButton(withTitle: strings().modalCancel)
 
                 }
 
@@ -404,7 +399,20 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             return .invoked
         }, with: self, for: .Nine, priority: .low, modifierFlags: [.command])
         
-        
+        window.set(handler: { _ -> KeyHandlerResult in
+            
+            appDelegate?.sharedApplicationContextValue?.notificationManager.updatePasslock(context.sharedContext.accountManager.transaction { transaction -> Bool in
+                switch transaction.getAccessChallengeData() {
+                case .none:
+                    return false
+                default:
+                    return true
+                }
+            })
+                        
+            return .invoked
+        }, with: self, for: .L, priority: .supreme, modifierFlags: [.command])
+
         
         
         window.set(handler: { [weak self] _ -> KeyHandlerResult in
@@ -511,6 +519,12 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         }, with: self, for: .Minus, priority: .low, modifierFlags: [.control])
         
         
+        #if DEBUG
+        window.set(handler: { [weak self] _ -> KeyHandlerResult in
+            showModal(with: AvatarConstructorController(context, target: .avatar), for: context.window)
+            return .invoked
+        }, with: self, for: .T, priority: .supreme, modifierFlags: [.command])
+        #endif
         
         
 //        window.set(handler: { [weak self] _ -> KeyHandlerResult in
@@ -519,44 +533,11 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
 //        }, with: self, for: .F, priority: .supreme, modifierFlags: [.command, .shift])
         
         window.set(handler: { _ -> KeyHandlerResult in
-            context.sharedContext.bindings.rootNavigation().push(ShortcutListController(context: context))
+            context.bindings.rootNavigation().push(ShortcutListController(context: context))
             return .invoked
         }, with: self, for: .Slash, priority: .low, modifierFlags: [.command])
         
-        
-        
-        #if DEBUG
-        window.set(handler: { _ -> KeyHandlerResult in
-
-//            filePanel(with: ["webp"], allowMultiple: false, for: window, completion: { values in
-//                if let first = values?.first {
-//                    showModal(with: AnimatedWebpController(context: context, path: first), for: window)
-//                }
-//            })
-            
-//            showModalText(for: context.window, text: "qkwjeh fkqwejfh qkwef hqwkef hqwkef hqwkef hqwkef hqwekf qwhflkj")
-
-//
-//            _ = presentDesktopCapturerWindow(select: { _ in
-//
-//            }, devices: context.sharedContext.devicesContext)
-            
-//            filePanel(with: ["mov", "mp4"], allowMultiple: false, for: window, completion: { values in
-//                if let first = values?.first {
-//                    let asset = AVURLAsset(url: URL(fileURLWithPath: first))
-//                    let track = asset.tracks(withMediaType: .video).first
-//                    if let track = track {
-//                        showModal(with: VideoAvatarModalController(context: context, asset: asset, track: track), for: window)
-//                    }
-//                }
-//            })
-          //  showModal(with: VideoAvatarModalController(context: context), for: window)
-            
-          //  context.sharedContext.bindings.rootNavigation().push(ShortcutListController(context: context))
-            return .invoked
-        }, with: self, for: .T, priority: .supreme, modifierFlags: .command)
-        #endif
-        
+      
         
         appUpdateDisposable.set((context.account.stateManager.appUpdateInfo |> deliverOnMainQueue).start(next: { info in
             
@@ -565,13 +546,13 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         
         suggestedLocalizationDisposable.set(( context.account.postbox.preferencesView(keys: [PreferencesKeys.suggestedLocalization]) |> mapToSignal { preferences -> Signal<SuggestedLocalizationInfo, NoError> in
             
-            let preferences = preferences.values[PreferencesKeys.suggestedLocalization] as? SuggestedLocalizationEntry
+            let preferences = preferences.values[PreferencesKeys.suggestedLocalization]?.get(SuggestedLocalizationEntry.self)
             if preferences == nil || !preferences!.isSeen, preferences?.languageCode != appCurrentLanguage.languageCode, preferences?.languageCode != "en" {
                 let current = Locale.preferredLanguages[0]
                 let split = current.split(separator: "-")
                 let lan: String = !split.isEmpty ? String(split[0]) : "en"
                 if lan != "en" {
-                    return suggestedLocalizationInfo(network: context.account.network, languageCode: lan, extractKeys: ["Suggest.Localization.Header", "Suggest.Localization.Other"]) |> take(1)
+                    return context.engine.localization.suggestedLocalizationInfo(languageCode: lan, extractKeys: ["Suggest.Localization.Header", "Suggest.Localization.Other"]) |> take(1)
                 }
             }
             return .complete()
@@ -582,13 +563,11 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         }))
         
 
-        someActionsDisposable.add(managedUpdatedRecentPeers(accountPeerId: context.account.peerId, postbox: context.account.postbox, network: context.account.network).start())
+        someActionsDisposable.add(context.engine.peers.managedUpdatedRecentPeers().start())
         
-        
-       
-        
+                
         clearReadNotifiesDisposable.set(context.account.stateManager.appliedIncomingReadMessages.start(next: { msgIds in
-            clearNotifies(by: msgIds)
+            UNUserNotifications.current?.clearNotifies(by: msgIds)
         }))
         
 
@@ -600,7 +579,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         let foldersSemaphore = DispatchSemaphore(value: 0)
         var folders: ChatListFolders = ChatListFolders(list: [], sidebar: false)
             
-        _ = (chatListFilterPreferences(postbox: context.account.postbox) |> take(1)).start(next: { value in
+        _ = (chatListFilterPreferences(engine: context.engine) |> take(1)).start(next: { value in
             folders = value
             foldersSemaphore.signal()
         })
@@ -705,7 +684,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
                     
                     let controller = ChatController.init(context: context, chatLocation: chatLocation, mode: .replyThread(data: result.message, mode: updatedMode), messageId: fromId, initialAction: nil, chatLocationContextHolder: result.contextHolder)
                     
-                    context.sharedContext.bindings.rootNavigation().push(controller)
+                    context.bindings.rootNavigation().push(controller)
                     
                 }, error: { error in
                     
@@ -720,19 +699,19 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         }
         
         if let session = callSession {
-            context.sharedContext.showCall(with: session)
+            rightController.callHeader?.show(true, contextObject: session)
         }
         
         if let groupCallContext = groupCallContext {
-            context.sharedContext.showGroupCall(with: groupCallContext)
+            rightController.callHeader?.show(true, contextObject: groupCallContext)
         }
         
-        self.updateFoldersDisposable.set(combineLatest(queue: .mainQueue(), chatListFilterPreferences(postbox: context.account.postbox), context.sharedContext.layoutHandler.get()).start(next: { [weak self] value, layout in
+        self.updateFoldersDisposable.set(combineLatest(queue: .mainQueue(), chatListFilterPreferences(engine: context.engine), context.sharedContext.layoutHandler.get()).start(next: { [weak self] value, layout in
             self?.updateLeftSidebar(with: value, layout: layout, animated: true)
         }))
         
         
-        if let controller = globalAudio, let header = self.rightController.header {
+        if let controller = context.audioPlayer, let _ = self.rightController.header {
             self.rightController.header?.show(false, contextObject: InlineAudioPlayerView.ContextObject(controller: controller, context: context, tableView: nil, supportTableView: nil))
         }
         
@@ -792,7 +771,6 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
     
     
     private func updateMinMaxWindowSize(animated: Bool) {
-        window.maxSize = NSMakeSize(.greatestFiniteMagnitude, .greatestFiniteMagnitude)
         var width: CGFloat = 380
         if leftSidebarController != nil {
             width += leftSidebarWidth
@@ -800,7 +778,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
         if context.sharedContext.layout == .minimisize {
             width += 70
         }
-        window.minSize = NSMakeSize(width, 500)
+        window.minSize = NSMakeSize(width, 550)
         
         if window.frame.width < window.minSize.width {
             window.setFrame(NSMakeRect(max(0, window.frame.minX - (window.minSize.width - window.frame.width)), window.frame.minY, window.minSize.width, window.frame.height), display: true, animate: false)
@@ -814,7 +792,7 @@ final class AuthorizedApplicationContext: NSObject, SplitViewDelegate {
             switch launchAction {
             case let .navigate(controller):
                 leftController.tabController.select(index: leftController.chatIndex)
-                context.sharedContext.bindings.rootNavigation().push(controller, context.sharedContext.layout == .single)
+                context.bindings.rootNavigation().push(controller, context.sharedContext.layout == .single)
             case .preferences:
                 leftController.tabController.select(index: leftController.settingsIndex)
             }

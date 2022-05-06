@@ -9,7 +9,7 @@
 import Cocoa
 import Postbox
 import TelegramCore
-import SyncCore
+
 import TGUIKit
 import SwiftSignalKit
 
@@ -29,6 +29,9 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         didSet {
             if oldValue != sticker {
                 self.previousAccept = false
+                if sticker == nil {
+                    self.playerView.set(nil)
+                }
             }
             updatePlayerIfNeeded()
         }
@@ -69,18 +72,28 @@ class MediaAnimatedStickerView: ChatMediaContentView {
     
     private var previousAccept: Bool = false
     
+    var overridePlayValue: Bool? = nil {
+        didSet {
+            updatePlayerIfNeeded()
+        }
+    }
     
     @objc func updatePlayerIfNeeded() {
         var accept = ((self.window != nil && self.window!.isKeyWindow) || (self.window != nil && !(self.window is Window))) && !NSIsEmptyRect(self.visibleRect) && !self.isDynamicContentLocked && self.sticker != nil
         
         let parameters = self.parameters as? ChatAnimatedStickerMediaLayoutParameters
         
-        accept = parameters?.alwaysAccept ?? accept 
+        accept = parameters?.alwaysAccept ?? accept
+
         
         if NSIsEmptyRect(self.visibleRect) || self.window == nil {
             accept = false
         }
         
+        if let value = overridePlayValue {
+            accept = value
+        }
+       
         var signal = Signal<Void, NoError>.single(Void())
         if accept && !nextForceAccept && self.sticker != nil {
             signal = signal |> delay(accept ? 0.1 : 0, queue: .mainQueue())
@@ -118,21 +131,38 @@ class MediaAnimatedStickerView: ChatMediaContentView {
     private var nextForceAccept: Bool = false
 
     
+    override var canSpamClicks: Bool {
+        return true
+    }
+    
     override func previewMediaIfPossible() -> Bool {
         if let table = table, let context = context, let window = window as? Window {
-            _ = startModalPreviewHandle(table, window: window, context: context)
+            startModalPreviewHandle(table, window: window, context: context)
         }
         return true
     }
+    
+//    private var test: MediaObjectToAvatar? = nil
+    
     override func executeInteraction(_ isControl: Bool) {
         if let window = window as? Window {
             if let context = context, let peerId = parent?.id.peerId, let media = media as? TelegramMediaFile, !media.isEmojiAnimatedSticker, let reference = media.stickerReference {
                 showModal(with:StickerPackPreviewModalController(context, peerId: peerId, reference: reference), for:window)
-            } else {
+            } else if let media = media as? TelegramMediaFile, let sticker = media.stickerText, !sticker.isEmpty {
                 self.playerView.playIfNeeded(true)
+                
+                parameters?.runEmojiScreenEffect(sticker)
                 
             }
         }
+    }
+    
+    override func playIfNeeded(_ playSound: Bool = false) {
+        playerView.playIfNeeded(playSound)
+    }
+    
+    func playAgain() {
+        self.playerView.playIfNeeded(true)
     }
     
     var chatLoopAnimated: Bool {
@@ -156,10 +186,6 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         }
     }
     
-    override func viewWillDraw() {
-        super.viewWillDraw()
-        updatePlayerIfNeeded()
-    }
     
     override func willRemove() {
         super.willRemove()
@@ -177,7 +203,7 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         updatePlayerIfNeeded()
     }
     
-    override func update(with media: Media, size: NSSize, context: AccountContext, parent: Message?, table: TableView?, parameters: ChatMediaLayoutParameters?, animated: Bool, positionFlags: LayoutPositionFlags?, approximateSynchronousValue: Bool) {
+    override func update(with media: Media, size: NSSize, context: AccountContext, parent: Message? = nil, table: TableView?, parameters: ChatMediaLayoutParameters? = nil, animated: Bool, positionFlags: LayoutPositionFlags? = nil, approximateSynchronousValue: Bool = false) {
         
         
         guard let file = media as? TelegramMediaFile else { return }
@@ -191,10 +217,12 @@ class MediaAnimatedStickerView: ChatMediaContentView {
             self.sticker = nil
         }
 
-        
         self.nextForceAccept = approximateSynchronousValue || parent?.id.namespace == Namespaces.Message.Local
 
         super.update(with: media, size: size, context: context, parent: parent, table: table, parameters: parameters, animated: animated, positionFlags: positionFlags, approximateSynchronousValue: approximateSynchronousValue)
+        
+        
+        let parameters = parameters as? ChatAnimatedStickerMediaLayoutParameters
         
         let reference: FileMediaReference
         let mediaResource: MediaResourceReference
@@ -229,12 +257,15 @@ class MediaAnimatedStickerView: ChatMediaContentView {
         
         self.loadResourceDisposable.set((data |> map { resourceData -> Data? in
             if resourceData.complete, let data = try? Data(contentsOf: URL(fileURLWithPath: resourceData.path), options: [.mappedIfSafe]) {
-                return data
+                if file.isWebm {
+                    return resourceData.path.data(using: .utf8)!
+                } else {
+                    return data
+                }
             }
             return nil
         } |> deliverOnMainQueue).start(next: { [weak file, weak self] data in
             if let data = data, let file = file, let `self` = self {
-                let parameters = parameters as? ChatAnimatedStickerMediaLayoutParameters
                 let playPolicy: LottiePlayPolicy = parameters?.playPolicy ?? (file.isEmojiAnimatedSticker || !self.chatLoopAnimated ? (self.parameters == nil ? .framesCount(1) : .once) : .loop)
                 var soundEffect: LottieSoundEffect? = nil
                 if file.isEmojiAnimatedSticker, let emoji = file.stickerText {
@@ -247,8 +278,11 @@ class MediaAnimatedStickerView: ChatMediaContentView {
                 let cache: ASCachePurpose = parameters?.cache ?? (size.width < 200 && size.width > 30 ? .temporaryLZ4(.thumb) : self.parent != nil ? .temporaryLZ4(.chat) : .none)
                 let fitzModifier = file.animatedEmojiFitzModifier
                 
+                
                 let type: LottieAnimationType
-                if file.mimeType == "image/webp" {
+                if file.isWebm {
+                    type = .webm
+                } else if file.mimeType == "image/webp" {
                     type = .webp
                 } else {
                     type = .lottie
@@ -258,71 +292,74 @@ class MediaAnimatedStickerView: ChatMediaContentView {
                 self.fetchStatus = .Local
             } else {
                 self?.sticker = nil
-                self?.fetchStatus = .Remote
+                self?.fetchStatus = .Remote(progress: 0)
             }
         }))
         
         let arguments = TransformImageArguments(corners: ImageCorners(), imageSize: size, boundingSize: size, intrinsicInsets: NSEdgeInsets())
         
-        
+               
+        if parameters?.noThumb == false || parameters == nil {
+            self.thumbView.setSignal(signal: cachedMedia(media: file, arguments: arguments, scale: backingScaleFactor), clearInstantly: updated)
+            
+            let hasPlaceholder = (parent == nil || file.immediateThumbnailData != nil) && self.thumbView.image == nil && size.height >= 30 && (parameters == nil || parameters!.shimmer)
+            if updated {
+                if hasPlaceholder {
+                    let current: StickerShimmerEffectView
+                    if let local = self.placeholderView {
+                        current = local
+                    } else {
+                        current = StickerShimmerEffectView()
+                        current.frame = bounds
+                        self.placeholderView = current
+                        addSubview(current, positioned: .below, relativeTo: playerView)
+                        if animated {
+                            current.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
+                        }
+                    }
+                    current.update(backgroundColor: nil, foregroundColor: NSColor(rgb: 0x748391, alpha: 0.2), shimmeringColor: NSColor(rgb: 0x748391, alpha: 0.35), data: file.immediateThumbnailData, size: size)
+                    current.updateAbsoluteRect(bounds, within: size)
+                } else {
+                    self.removePlaceholder(animated: animated)
+                }
+            }
+            
+            self.thumbView.imageUpdated = { [weak self] value in
+                if value != nil {
+                    self?.removePlaceholder(animated: animated)
+                }
+            }
+            
+                    
+            
+            if !self.thumbView.isFullyLoaded {
+
+                let signal: Signal<ImageDataTransformation, NoError>
+                    
+                
+                
+                switch file.mimeType {
+                case "image/webp":
+                    signal = chatMessageSticker(postbox: context.account.postbox, file: reference, small: size.width <= 40, scale: backingScaleFactor, fetched: true)
+                default:
+                    signal = chatMessageAnimatedSticker(postbox: context.account.postbox, file: reference, small: size.width <= 40, scale: backingScaleFactor, size: size, fetched: true, thumbAtFrame: parameters?.thumbAtFrame ?? 0, isVideo: file.fileName == "webm-preview")
+                }
+                self.thumbView.setSignal(signal, cacheImage: { [weak file, weak self] result in
+                    if let file = file {
+                        cacheMedia(result, media: file, arguments: arguments, scale: System.backingScale)
+                    }
+                    self?.removePlaceholder(animated: false)
+                })
+            }
+            self.thumbView.set(arguments: arguments)
+            if updated {
+                self.playerView.removeFromSuperview()
+                addSubview(self.thumbView)
+            }
+
+        }
         
        
-        
-        self.thumbView.setSignal(signal: cachedMedia(media: file, arguments: arguments, scale: backingScaleFactor), clearInstantly: updated)
-        
-        let hasPlaceholder = (parent == nil || file.immediateThumbnailData != nil) && self.thumbView.image == nil && size.height >= 40
-        if updated {
-            if hasPlaceholder {
-                let current: StickerShimmerEffectView
-                if let local = self.placeholderView {
-                    current = local
-                } else {
-                    current = StickerShimmerEffectView()
-                    current.frame = bounds
-                    self.placeholderView = current
-                    addSubview(current, positioned: .below, relativeTo: playerView)
-                    if animated {
-                        current.layer?.animateAlpha(from: 0, to: 1, duration: 0.2)
-                    }
-                }
-                current.update(backgroundColor: nil, foregroundColor: NSColor(rgb: 0x748391, alpha: 0.2), shimmeringColor: NSColor(rgb: 0x748391, alpha: 0.35), data: file.immediateThumbnailData, size: size)
-                current.updateAbsoluteRect(bounds, within: size)
-            } else {
-                self.removePlaceholder(animated: animated)
-            }
-        }
-        
-        self.thumbView.imageUpdated = { [weak self] value in
-            if value != nil {
-                self?.removePlaceholder(animated: animated)
-            }
-        }
-        
-                
-        
-        if !self.thumbView.isFullyLoaded {
-            
-            let signal: Signal<ImageDataTransformation, NoError>
-                
-            switch file.mimeType {
-            case "image/webp":
-                signal = chatMessageSticker(postbox: context.account.postbox, file: reference, small: size.width < 120, scale: backingScaleFactor, fetched: true)
-            default:
-                signal = chatMessageAnimatedSticker(postbox: context.account.postbox, file: reference, small: false, scale: backingScaleFactor, size: size, fetched: true)
-            }
-            self.thumbView.setSignal(signal, cacheImage: { [weak file, weak self] result in
-                if let file = file {
-                    cacheMedia(result, media: file, arguments: arguments, scale: System.backingScale)
-                }
-                self?.removePlaceholder(animated: false)
-            })
-        }
-        self.thumbView.set(arguments: arguments)
-        if updated {
-            self.playerView.removeFromSuperview()
-            addSubview(self.thumbView)
-        }
-
         
         fetchDisposable.set(fetchedMediaResource(mediaBox: context.account.postbox.mediaBox, reference: mediaResource).start())
         if updated {
@@ -334,8 +371,12 @@ class MediaAnimatedStickerView: ChatMediaContentView {
                     self.thumbView.removeFromSuperview()
                     self.removePlaceholder(animated: false)
                 case .stoped:
-                    self.playerView.removeFromSuperview()
-                    self.addSubview(self.thumbView)
+                    if let parameters = parameters, parameters.hidePlayer == false {
+                        break
+                    } else {
+                        self.playerView.removeFromSuperview()
+                        self.addSubview(self.thumbView)
+                    }
                 default:
                     break
                 }

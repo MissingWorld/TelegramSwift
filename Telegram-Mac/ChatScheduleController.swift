@@ -8,7 +8,7 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+
 import Postbox
 import SwiftSignalKit
 
@@ -30,11 +30,11 @@ class ChatScheduleController: ChatController {
         let context = self.context
         
         chatInteraction.requestMessageActionCallback = { _, _, _ in
-            alert(for: context.window, info: L10n.chatScheduledInlineButtonError)
+            alert(for: context.window, info: strings().chatScheduledInlineButtonError)
         }
         
         chatInteraction.vote = { _, _, _ in
-            alert(for: context.window, info: L10n.chatScheduledInlineButtonError)
+            alert(for: context.window, info: strings().chatScheduledInlineButtonError)
         }
     }
     

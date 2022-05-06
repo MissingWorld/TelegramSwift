@@ -8,148 +8,13 @@
 
 import Cocoa
 import TGUIKit
-import SyncCore
+
 import Postbox
 import SwiftSignalKit
 
 private let duration: TimeInterval = 0.4
 private let timingFunction: CAMediaTimingFunctionName = .spring
 
-
-final class AvatarContentView: View {
-    private let unclippedView: ImageView
-    private let clippedView: ImageView
-
-    private var disposable: Disposable?
-    private var audioLevelView: VoiceBlobView?
-
-    let peerId: PeerId
-
-    private var scaleAnimator: DisplayLinkAnimator?
-    private let inset: CGFloat
-    init(context: AccountContext, peer: Peer, message: Message?, synchronousLoad: Bool, size: NSSize, inset: CGFloat = 3) {
-        self.peerId = peer.id
-        self.inset = inset
-        self.unclippedView = ImageView()
-        self.clippedView = ImageView()
-        
-        super.init(frame: CGRect(origin: .zero, size: size))
-        
-        self.addSubview(self.unclippedView)
-        self.addSubview(self.clippedView)
-
-        
-        
-        let signal = peerAvatarImage(account: context.account, photo: .peer(peer, peer.smallProfileImage, peer.displayLetters, message), displayDimensions: size, scale: System.backingScale, font: .avatar(size.height / 3 + 3), genCap: true, synchronousLoad: synchronousLoad)
-        
-        let disposable = (signal
-            |> deliverOnMainQueue).start(next: { [weak self] image in
-                guard let strongSelf = self else {
-                    return
-                }
-                if let image = image.0 {
-                    strongSelf.updateImage(image: image)
-                }
-            })
-        self.disposable = disposable
-    }
-
-    func updateAudioLevel(color: NSColor, value: Float) {
-        if self.audioLevelView == nil, value > 0.0 {
-            let blobFrame = NSMakeRect(0, 0, frame.width + 8, frame.height + 8)
-
-            let audioLevelView = VoiceBlobView(
-                frame: blobFrame,
-                maxLevel: 0.3,
-                smallBlobRange: (0, 0),
-                mediumBlobRange: (0.7, 0.8),
-                bigBlobRange: (0.8, 0.9)
-            )
-
-
-            audioLevelView.setColor(color)
-            self.audioLevelView = audioLevelView
-            self.addSubview(audioLevelView, positioned: .below, relativeTo: self.subviews.first)
-            audioLevelView.center()
-      }
-
-      let level = min(1.0, max(0.0, CGFloat(value)))
-      if let audioLevelView = self.audioLevelView {
-          audioLevelView.updateLevel(CGFloat(value) * 2.0)
-
-          let avatarScale: CGFloat
-          let audioLevelScale: CGFloat
-          if value > 0.0 {
-              audioLevelView.startAnimating()
-              avatarScale = 1.03 + level * 0.07
-              audioLevelScale = 1.0
-          } else {
-              audioLevelView.stopAnimating()
-              avatarScale = 1.0
-              audioLevelScale = 0.01
-          }
-            let t = clippedView.layer!.transform
-            let scale = sqrt((t.m11 * t.m11) + (t.m12 * t.m12) + (t.m13 * t.m13))
-            self.scaleAnimator = DisplayLinkAnimator(duration: 0.1, from: scale, to: avatarScale, update: { [weak self] value in
-                guard let `self` = self else {
-                    return
-                }
-
-                let rect = self.clippedView.bounds
-
-                var fr = CATransform3DIdentity
-                fr = CATransform3DTranslate(fr, rect.width / 2, rect.width / 2, 0)
-                fr = CATransform3DScale(fr, value, value, 1)
-                fr = CATransform3DTranslate(fr, -(rect.width / 2), -(rect.height / 2), 0)
-
-                self.clippedView.layer?.transform = fr
-                self.unclippedView.layer?.transform = fr
-
-            }, completion: {
-
-            })
-      }
-  }
-
-    
-    required init?(coder decoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-    
-    required init(frame frameRect: NSRect) {
-        fatalError("init(frame:) has not been implemented")
-    }
-    
-    private func updateImage(image: CGImage) {
-        self.unclippedView.image = image
-        let frameSize = NSMakeSize(frame.height, frame.height)
-        self.clippedView.image = generateImage(frameSize, rotatedContext: { size, context in
-            context.clear(CGRect(origin: CGPoint(), size: size))
-            context.translateBy(x: size.width / 2.0, y: size.height / 2.0)
-            context.scaleBy(x: 1.0, y: -1.0)
-            context.translateBy(x: -size.width / 2.0, y: -size.height / 2.0)
-            context.draw(image, in: CGRect(origin: CGPoint(), size: size))
-            context.translateBy(x: size.width / 2.0, y: size.height / 2.0)
-            context.scaleBy(x: 1.0, y: -1.0)
-            context.translateBy(x: -size.width / 2.0, y: -size.height / 2.0)
-            
-            context.setBlendMode(.copy)
-            context.setFillColor(NSColor.clear.cgColor)
-            context.fillEllipse(in: CGRect(origin: CGPoint(), size: size).insetBy(dx: -(inset / 2), dy: -(inset / 2)).offsetBy(dx: -(frameSize.width - inset), dy: 0.0))
-        })
-    }
-    
-    deinit {
-        self.disposable?.dispose()
-    }
-    
-    func updateLayout(size: CGSize, isClipped: Bool, animated: Bool) {
-        self.unclippedView.frame = CGRect(origin: focus(size).origin, size: size)
-        self.clippedView.frame = CGRect(origin: focus(size).origin, size: size)
-        self.unclippedView.change(opacity: isClipped ? 0.0 : 1.0, animated: animated)
-        self.clippedView.change(opacity: isClipped ? 1.0 : 0.0, animated: animated)
-    }
-}
 
 
 
@@ -164,7 +29,7 @@ protocol ChannelCommentRenderer {
 }
 
 
-class CommentsBasicControl : Control, ChannelCommentRenderer {
+class CommentsBasicControl : Button, ChannelCommentRenderer {
     
     fileprivate var textViews: [ChannelCommentsRenderData.Text : (TextView, ChannelCommentsRenderData.Text)] = [:]
     fileprivate var renderData: ChannelCommentsRenderData?
@@ -498,15 +363,15 @@ class ChannelCommentsBubbleControl: CommentsBasicControl {
         
         if render.peers.isEmpty {
             var f = focus(theme.icons.channel_comments_bubble.backingSize)
-            f.origin.x = 15 + 6
+            f.origin.x = 18 + 6
             rect = f
         } else {
             if render.peers.count == 1 {
                 rect = focus(NSMakeSize(24 * CGFloat(render.peers.count), 22))
             } else {
-                rect = focus(NSMakeSize(22 + (22 * CGFloat(render.peers.count - 1)), 22))
+                rect = focus(NSMakeSize(22 + (17 * CGFloat(render.peers.count - 1)), 22))
             }
-            rect.origin.x = 13 + 6
+            rect.origin.x = 18 + 6
         }
         
         var f = focus(render.titleSize)
@@ -574,12 +439,12 @@ class ChannelCommentsBubbleControl: CommentsBasicControl {
             control.updateLayout(size: NSMakeSize(22, 22), isClipped: inserted.0 != 0, animated: animated)
             control.userInteractionEnabled = false
             control.setFrameSize(NSMakeSize(22, 22))
-            control.setFrameOrigin(NSMakePoint(CGFloat(inserted.0) * 19, 0))
+            control.setFrameOrigin(NSMakePoint(CGFloat(inserted.0) * 18, 0))
             avatars.insert(control, at: inserted.0)
             avatarsContainer.subviews.insert(control, at: inserted.0)
             if animated {
                 if let index = inserted.2 {
-                    control.layer?.animatePosition(from: NSMakePoint(CGFloat(index) * 19, 0), to: control.frame.origin, timingFunction: timingFunction)
+                    control.layer?.animatePosition(from: NSMakePoint(CGFloat(index) * 18, 0), to: control.frame.origin, timingFunction: timingFunction)
                 } else {
                     control.layer?.animateAlpha(from: 0, to: 1, duration: duration, timingFunction: timingFunction)
                     control.layer?.animateScaleSpring(from: 0.2, to: 1.0, duration: duration)
@@ -589,7 +454,7 @@ class ChannelCommentsBubbleControl: CommentsBasicControl {
         for updated in updated {
             let control = avatars[updated.0]
             control.updateLayout(size: NSMakeSize(22, 22), isClipped: updated.0 != 0, animated: animated)
-            let updatedPoint = NSMakePoint(CGFloat(updated.0) * 19, 0)
+            let updatedPoint = NSMakePoint(CGFloat(updated.0) * 18, 0)
             if animated {
                 control.layer?.animatePosition(from: control.frame.origin - updatedPoint, to: .zero, duration: duration, timingFunction: timingFunction, additive: true)
             }
@@ -808,7 +673,7 @@ final class ChannelCommentsSmallControl : CommentsBasicControl {
         } else {
             imageView.image = theme.icons.channel_comments_overlay
         }
-        _ = imageView.sizeToFit()
+        imageView.sizeToFit()
         
         layer?.cornerRadius = min(size.height, size.width) / 2
         

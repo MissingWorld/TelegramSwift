@@ -10,7 +10,7 @@ import Cocoa
 import TGUIKit
 import SwiftSignalKit
 import TelegramCore
-import SyncCore
+
 import Postbox
 
 
@@ -578,7 +578,7 @@ class CallHeaderBasicView : NavigationHeaderView {
     fileprivate let endCall:ImageButton = ImageButton()
     fileprivate let statusTextView:TextView = TextView()
     fileprivate let muteControl:ImageButton = ImageButton()
-
+    fileprivate let capView = View()
     let disposable = MetaDisposable()
     let hideDisposable = MetaDisposable()
 
@@ -625,7 +625,7 @@ class CallHeaderBasicView : NavigationHeaderView {
             }
             statusText = durationString
         case let .startsIn(time):
-            statusText = L10n.chatHeaderVoiceChatStartsIn(timerText(time - Int(Date().timeIntervalSince1970)))
+            statusText = strings().chatHeaderVoiceChatStartsIn(timerText(time - Int(Date().timeIntervalSince1970)))
         }
         let layout = TextViewLayout.init(.initialize(string: statusText, color: .white, font: .normal(13)))
         layout.measure(width: .greatestFiniteMagnitude)
@@ -648,10 +648,12 @@ class CallHeaderBasicView : NavigationHeaderView {
         
         backgroundView.frame = bounds
         backgroundView.wantsLayer = true
+        addSubview(capView)
         addSubview(backgroundView)
         addSubview(container)
         statusTextView.backgroundColor = .clear
-
+        statusTextView.userInteractionEnabled = false
+        statusTextView.isSelectable = false
 
         callInfo.set(font: .medium(.text), for: .Normal)
         callInfo.disableActions()
@@ -729,11 +731,13 @@ class CallHeaderBasicView : NavigationHeaderView {
     }
 
     func getEndText() -> String {
-        return L10n.callHeaderEndCall
+        return strings().callHeaderEndCall
     }
     
     override func layout() {
         super.layout()
+        
+        capView.frame = NSMakeRect(0, 0, frame.width, height)
         
         backgroundView.frame = bounds
         container.frame = NSMakeRect(0, 0, frame.width, height)
@@ -749,6 +753,7 @@ class CallHeaderBasicView : NavigationHeaderView {
     override func updateLocalizationAndTheme(theme: PresentationTheme) {
         super.updateLocalizationAndTheme(theme: theme)
         let theme = (theme as! TelegramPresentationTheme)
+        self.capView.backgroundColor = backgroundView.backgroundColor
         endCall.set(image: theme.icons.callInlineDecline, for: .Normal)
         endCall.set(image: theme.icons.callInlineDecline, for: .Highlight)
         _ = endCall.sizeToFit(NSMakeSize(10, 10), thatFit: false)
@@ -795,7 +800,7 @@ class CallNavigationHeaderView: CallHeaderBasicView {
         let account = session.account
         let signal = Signal<Peer?, NoError>.single(session.peer) |> then(session.account.postbox.loadedPeerWithId(session.peerId) |> map(Optional.init) |> deliverOnMainQueue)
 
-        let accountPeer: Signal<Peer?, NoError> =  session.sharedContext.activeAccounts |> mapToSignal { accounts in
+        let accountPeer: Signal<Peer?, NoError> =  session.accountContext.sharedContext.activeAccounts |> mapToSignal { accounts in
             if accounts.accounts.count == 1 {
                 return .single(nil)
             } else {

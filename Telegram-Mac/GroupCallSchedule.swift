@@ -24,8 +24,8 @@ private final class GroupCallScheduleTimerView : View {
     private let mask: View
     required init(frame frameRect: NSRect) {
         mask = View(frame: NSMakeRect(0, 0, frameRect.width, 64))
-        let purple = NSColor(rgb: 0x3252ef)
-        let pink = NSColor(rgb: 0xef436c)
+        let purple = GroupCallTheme.purple
+        let pink = GroupCallTheme.pink
         
         headerView.userInteractionEnabled = false
         headerView.isSelectable = false
@@ -58,7 +58,7 @@ private final class GroupCallScheduleTimerView : View {
         let time = Int(timeValue - Int32(Date().timeIntervalSince1970))
         
         let text = timerText(time, addminus: false)
-        let value = DynamicCounterTextView.make(for: text, count: text, font: .avatar(50), textColor: .white, width: frame.width)
+        let value = DynamicCounterTextView.make(for: text, count: text, font: .digitalRound(50), textColor: .white, width: frame.width)
         
         counter.update(value, animated: animated, reversed: true)
         
@@ -107,7 +107,7 @@ private final class GroupCallScheduleTimerView : View {
             mask.layer?.removeAnimation(forKey: "opacity")
         }
         
-        let headerText = time >= 0 ? L10n.voiceChatScheduledHeader : L10n.voiceChatScheduledHeaderLate
+        let headerText = time >= 0 ? strings().voiceChatScheduledHeader : strings().voiceChatScheduledHeaderLate
         
         let headerLayout = TextViewLayout.init(.initialize(string: headerText, color: GroupCallTheme.customTheme.textColor, font: .avatar(26)))
         headerLayout.measure(width: frame.width - 60)
@@ -126,6 +126,8 @@ private final class GroupCallScheduleTimerView : View {
     override func layout() {
         super.layout()
         mask.center()
+        headerView.centerX(y: mask.frame.minY - headerView.frame.height)
+        descView.centerX(y: mask.frame.maxY)
     }
 }
 

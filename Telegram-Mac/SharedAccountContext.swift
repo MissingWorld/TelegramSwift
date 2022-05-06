@@ -8,11 +8,11 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+import InAppSettings
 import Postbox
 import SwiftSignalKit
 import TGUIKit
-import SyncCore
+import BuildConfig
 
 
 
@@ -60,8 +60,7 @@ public final class AccountWithInfo: Equatable {
 
 
 class SharedAccountContext {
-    let accountManager: AccountManager
-    var bindings: AccountContextBindings = AccountContextBindings()
+    let accountManager: AccountManager<TelegramAccountManagerTypes>
 
     #if !SHARE
     let inputSource: InputSources = InputSources()
@@ -103,69 +102,90 @@ class SharedAccountContext {
     
     private(set) var layout:SplitViewState = .none
     let layoutHandler:ValuePromise<SplitViewState> = ValuePromise(ignoreRepeated:true)
+    
+    public var callStatusBarMenuItems:(()->[ContextMenuItem])? = nil {
+        didSet {
+            updateStatusBarMenuItem()
+        }
+    }
 
     private var statusItem: NSStatusItem?
 
     
     func updateStatusBarImage(_ image: NSImage?) -> Void {
-        let icon = image ?? NSImage(named: "StatusIcon")
-      //  icon?.isTemplate = true
+        let icon: NSImage
+        if let image = image {
+            icon = image
+        } else {
+            icon = NSImage(named: "StatusIcon")!
+            icon.isTemplate = true
+        }
         statusItem?.image = icon
     }
     
     private func updateStatusBarMenuItem() {
+        
         let menu = NSMenu()
         
-        if let activeAccountsInfoValue = activeAccountsInfoValue, activeAccountsInfoValue.accounts.count > 1 {
-            var activeAccountsInfoValue = activeAccountsInfoValue
-            for (i, value) in activeAccountsInfoValue.accounts.enumerated() {
-                if value.account.id == activeAccountsInfoValue.primary {
-                    activeAccountsInfoValue.accounts.swapAt(i, 0)
-                    break
-                }
+        if let items = self.callStatusBarMenuItems?()  {
+            for item in items {
+                item.menu = nil
+                menu.addItem(item)
             }
-            for account in activeAccountsInfoValue.accounts {
-                let state: NSControl.StateValue?
-                if account.account.id == activeAccountsInfoValue.primary {
-                    state = .on
-                } else {
-                    state = nil
+        } else {
+            if let activeAccountsInfoValue = activeAccountsInfoValue, activeAccountsInfoValue.accounts.count > 1 {
+                var activeAccountsInfoValue = activeAccountsInfoValue
+                for (i, value) in activeAccountsInfoValue.accounts.enumerated() {
+                    if value.account.id == activeAccountsInfoValue.primary {
+                        activeAccountsInfoValue.accounts.swapAt(i, 0)
+                        break
+                    }
                 }
-                let image: NSImage?
-                if let cgImage = self.accountPhotos[account.account.peerId] {
-                    image = NSImage(cgImage: cgImage, size: NSMakeSize(16, 16))
-                } else {
-                    image = nil
+                for account in activeAccountsInfoValue.accounts {
+                    let state: NSControl.StateValue?
+                    if account.account.id == activeAccountsInfoValue.primary {
+                        state = .on
+                    } else {
+                        state = nil
+                    }
+                    let image: NSImage?
+                    if let cgImage = self.accountPhotos[account.account.peerId] {
+                        image = NSImage(cgImage: cgImage, size: NSMakeSize(16, 16))
+                    } else {
+                        image = nil
+                    }
+                    
+                    menu.addItem(ContextMenuItem(account.peer.displayTitle, handler: {
+                        self.switchToAccount(id: account.account.id, action: nil)
+                    }, image: image, state: state))
+                    
+                    if account.account.id == activeAccountsInfoValue.primary {
+                        menu.addItem(ContextSeparatorItem())
+                    }
                 }
                 
-                menu.addItem(ContextMenuItem(account.peer.displayTitle, handler: {
-                    self.switchToAccount(id: account.account.id, action: nil)
-                }, image: image, state: state))
                 
-                if account.account.id == activeAccountsInfoValue.primary {
-                    menu.addItem(ContextSeparatorItem())
-                }
+                menu.addItem(ContextSeparatorItem())
             }
             
-            
-            menu.addItem(ContextSeparatorItem())
+            menu.addItem(ContextMenuItem(strings().statusBarActivate, handler: {
+                if !mainWindow.isKeyWindow  {
+                    NSApp.activate(ignoringOtherApps: true)
+                    mainWindow.deminiaturize(nil)
+                } else {
+                    NSApp.hide(nil)
+                }
+                
+            }, dynamicTitle: {
+                return !mainWindow.isKeyWindow ? strings().statusBarActivate : strings().statusBarHide
+            }))
+                    
+            menu.addItem(ContextMenuItem(strings().statusBarQuit, handler: {
+                NSApp.terminate(nil)
+            }))
         }
         
-        menu.addItem(ContextMenuItem(L10n.statusBarActivate, handler: {
-            if !mainWindow.isKeyWindow  {
-                NSApp.activate(ignoringOtherApps: true)
-                mainWindow.deminiaturize(nil)
-            } else {
-                NSApp.hide(nil)
-            }
-            
-        }, dynamicTitle: {
-            return !mainWindow.isKeyWindow ? L10n.statusBarActivate : L10n.statusBarHide
-        }))
-                
-        menu.addItem(ContextMenuItem(L10n.statusBarQuit, handler: {
-            NSApp.terminate(nil)
-        }))
+       
         
         statusItem?.menu = menu
     }
@@ -188,7 +208,7 @@ class SharedAccountContext {
     
 
     
-    init(accountManager: AccountManager, networkArguments: NetworkInitializationArguments, rootPath: String, encryptionParameters: ValueBoxEncryptionParameters, appEncryption: AppEncryptionParameters, displayUpgradeProgress: @escaping(Float?) -> Void) {
+    init(accountManager: AccountManager<TelegramAccountManagerTypes>, networkArguments: NetworkInitializationArguments, rootPath: String, encryptionParameters: ValueBoxEncryptionParameters, appEncryption: AppEncryptionParameters, displayUpgradeProgress: @escaping(Float?) -> Void) {
         self.accountManager = accountManager
         self.displayUpgradeProgress = displayUpgradeProgress
         self.appEncryption = Atomic(value: appEncryption)
@@ -225,32 +245,39 @@ class SharedAccountContext {
                 var result: [AccountRecordId: AccountAttributes] = [:]
                 for record in view.records {
                     let isLoggedOut = record.attributes.contains(where: { attribute in
-                        return attribute is LoggedOutAccountAttribute
-                    })
-                    if isLoggedOut {
-                        continue
-                    }
-                    let isTestingEnvironment = record.attributes.contains(where: { attribute in
-                        if let attribute = attribute as? AccountEnvironmentAttribute, case .test = attribute.environment {
+                        if case .loggedOut = attribute {
                             return true
                         } else {
                             return false
                         }
                     })
+                    if isLoggedOut {
+                        continue
+                    }
+
+                    let isTestingEnvironment = record.attributes.contains(where: { attribute in
+                        if case let .environment(environment) = attribute, case .test = environment.environment {
+                            return true
+                        } else {
+                            return false
+                        }
+                    })
+
                     var backupData: AccountBackupData?
                     var sortIndex: Int32 = 0
                     for attribute in record.attributes {
-                        if let attribute = attribute as? AccountSortOrderAttribute {
-                            sortIndex = attribute.order
-                        } else if let attribute = attribute as? AccountBackupDataAttribute, false {
-                            backupData = attribute.data
+                        if case let .sortOrder(sortOrder) = attribute {
+                            sortIndex = sortOrder.order
+                        } else if case let .backupData(backupDataValue) = attribute {
+                            backupData = backupDataValue.data
                         }
                     }
+
                     result[record.id] = AccountAttributes(sortIndex: sortIndex, isTestingEnvironment: isTestingEnvironment, backupData: backupData)
                 }
                 let authRecord: (AccountRecordId, Bool)? = view.currentAuthAccount.flatMap({ authAccount in
                     let isTestingEnvironment = authAccount.attributes.contains(where: { attribute in
-                        if let attribute = attribute as? AccountEnvironmentAttribute, case .test = attribute.environment {
+                        if case let .environment(environment) = attribute, case .test = environment.environment {
                             return true
                         } else {
                             return false
@@ -258,6 +285,7 @@ class SharedAccountContext {
                     })
                     return (authAccount.id, isTestingEnvironment)
                 })
+
                 return (view.currentRecord?.id, result, authRecord)
             }
             |> distinctUntilChanged(isEqual: { lhs, rhs in
@@ -285,13 +313,9 @@ class SharedAccountContext {
                                 switch result {
                                 case let .authorized(account):
                                     #if SHARE
-                                    setupAccount(account, fetchCachedResourceRepresentation: nil, transformOutgoingMessageMedia: nil, preFetchedResourcePath: { resource in
-                                        return nil
-                                    })
+                                    setupAccount(account)
                                     #else
-                                    setupAccount(account, fetchCachedResourceRepresentation: fetchCachedResourceRepresentation, transformOutgoingMessageMedia: transformOutgoingMessageMedia, preFetchedResourcePath: { resource in
-                                        return nil
-                                    })
+                                    setupAccount(account, fetchCachedResourceRepresentation: fetchCachedResourceRepresentation, transformOutgoingMessageMedia: transformOutgoingMessageMedia)
                                     #endif
 
                                     return .ready(id, account, attributes.sortIndex)
@@ -338,8 +362,6 @@ class SharedAccountContext {
                         }
                 }
                 
-
-                
                 differenceDisposable.set(combineLatest(queue: .mainQueue(), mappedAddedAccounts, addedAuthSignal).start(next: { mappedAddedAccounts, authAccount in
                     var addedAccounts: [(AccountRecordId, Account?, Int32)] = []
                     switch mappedAddedAccounts {
@@ -349,7 +371,6 @@ class SharedAccountContext {
                     case let .ready(value):
                         addedAccounts = value
                     }
-                    
                     
                     var hadUpdates = false
                     if self.activeAccountsValue == nil {
@@ -501,7 +522,7 @@ class SharedAccountContext {
             #if !SHARE
             spotlights.removeAll()
             for info in accounts {
-                spotlights[info.account.id] = SpotlightContext(account: info.account)
+                spotlights[info.account.id] = SpotlightContext(engine: TelegramEngine(account: info.account))
             }
             #endif
         })
@@ -510,7 +531,7 @@ class SharedAccountContext {
     
     public func beginNewAuth(testingEnvironment: Bool) {
         let _ = self.accountManager.transaction({ transaction -> Void in
-            let _ = transaction.createAuth([AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production)])
+            let _ = transaction.createAuth([.environment(AccountEnvironmentAttribute(environment: testingEnvironment ? .test : .production))])
         }).start()
     }
     
@@ -533,13 +554,13 @@ class SharedAccountContext {
     private let crossCallSession: Atomic<PCallSession?> = Atomic<PCallSession?>(value: nil)
     
     func getCrossAccountCallSession() -> PCallSession? {
-        return crossCallSession.swap(nil)
+        return crossCallSession.with { $0 }
     }
     
     private let crossGroupCall: Atomic<GroupCallContext?> = Atomic<GroupCallContext?>(value: nil)
     
     func getCrossAccountGroupCall() -> GroupCallContext? {
-        return crossGroupCall.swap(nil)
+        return crossGroupCall.with { $0 }
     }
     #endif
     
@@ -547,18 +568,19 @@ class SharedAccountContext {
     private func updateAccountBackupData(account: Account) -> Signal<Never, NoError> {
         return accountBackupData(postbox: account.postbox)
             |> mapToSignal { backupData -> Signal<Never, NoError> in
-                guard let backupData = backupData else {
-                    return .complete()
-                }
                 return self.accountManager.transaction { transaction -> Void in
                     transaction.updateRecord(account.id, { record in
                         guard let record = record else {
                             return nil
                         }
-                        var attributes = record.attributes.filter({ !($0 is AccountBackupDataAttribute) })
-                        if false {
-                            attributes.append(AccountBackupDataAttribute(data: backupData))
+                        let attributes = record.attributes.filter {
+                            if case .backupData = $0 {
+                                return false
+                            } else {
+                                return true
+                            }
                         }
+                       
                         return AccountRecord(id: record.id, attributes: attributes, temporarySessionId: record.temporarySessionId)
                     })
                     }
@@ -568,6 +590,14 @@ class SharedAccountContext {
 
     
     public func switchToAccount(id: AccountRecordId, action: LaunchNavigation?) {
+        
+        #if !SHARE
+        if let value = appDelegate?.supportAccountContextValue?.find(id) {
+            value.focus()
+            return;
+        }
+        #endif
+        
         if self.activeAccountsValue?.primary?.id == id {
             return
         }
@@ -587,9 +617,7 @@ class SharedAccountContext {
         }
         return
         #else
-        
-        _ = crossCallSession.swap(bindings.callSession())
-        _ = crossGroupCall.swap(bindings.groupCall())
+
 
          _ = self.accountManager.transaction({ transaction in
             if transaction.getCurrent()?.0 != id {
@@ -600,42 +628,70 @@ class SharedAccountContext {
         
     }
     
+    public func openAccount(id: AccountRecordId) {
+    #if !SHARE
+
+        let signal = self.activeAccounts
+        |> take(1)
+        |> deliverOnMainQueue
+        _ = signal.start(next: { values in
+            for account in values.accounts {
+                if account.0 == id {
+                    appDelegate?.openAccountInNewWindow(account.1)
+                }
+            }
+        })
+        #endif
+    }
+
+    
     
     
     #if !SHARE
     
     var hasActiveCall:Bool {
-        return bindings.callSession() != nil || bindings.groupCall() != nil
+        return crossCallSession.with( { $0 }) != nil || crossGroupCall.with( { $0 }) != nil
     }
 
+    func dropCrossCall() {
+        _ = crossGroupCall.swap(nil)
+        _ = crossCallSession.swap(nil)
+    }
+    
     func endCurrentCall() -> Signal<Bool, NoError> {
-        if let groupCall = bindings.groupCall() {
+        if let groupCall = crossGroupCall.with({ $0 }) {
             return groupCall.leaveSignal() |> filter { $0 }
-        } else if let callSession = bindings.callSession() {
+        } else if let callSession = crossCallSession.swap(nil) {
             return callSession.hangUpCurrentCall() |> filter { $0 }
         }
         return .single(true)
     }
     
     func showCall(with session:PCallSession) {
-        let callHeader = bindings.rootNavigation().callHeader
-        callHeader?.show(true, contextObject: session)
+        appDelegate?.enumerateAccountContexts { accountContext in
+            let callHeader = accountContext.bindings.rootNavigation().callHeader
+            callHeader?.show(true, contextObject: session)
+        }
+        _ = crossCallSession.swap(session)
     }
     private let groupCallContextValue:Promise<GroupCallContext?> = Promise(nil)
     var groupCallContext:Signal<GroupCallContext?, NoError> {
         return groupCallContextValue.get()
     }
     func showGroupCall(with context: GroupCallContext) {
-        let callHeader = bindings.rootNavigation().callHeader
-        callHeader?.show(true, contextObject: context)
+        appDelegate?.enumerateAccountContexts { accountContext in
+            let callHeader = accountContext.bindings.rootNavigation().callHeader
+            callHeader?.show(true, contextObject: context)
+        }
+        _ = crossGroupCall.swap(context)
     }
     
     func updateCurrentGroupCallValue(_ value: GroupCallContext?) -> Void {
-        groupCallContextValue.set(.single(value))
+        groupCallContextValue.set(.single(crossGroupCall.modify( { _ in return value } )))
     }
     
     func endGroupCall(terminate: Bool) -> Signal<Bool, NoError> {
-        if let groupCall = bindings.groupCall() {
+        if let groupCall = crossGroupCall.swap(nil) {
             return groupCall.call.leave(terminateIfPossible: terminate) |> filter { $0 } |> take(1)
         } else {
             return .single(true)

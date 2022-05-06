@@ -10,7 +10,7 @@ import Cocoa
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 
 
 private let queue: Queue = Queue()
@@ -167,39 +167,39 @@ struct ChatUndoStatuses {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChatsArchivedCountable(archiveChatCount)
+            text += strings().chatUndoManagerChatsArchivedCountable(archiveChatCount)
         }
         
         if leftChatCount > 0 {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChatLeftCountable(leftChatCount)
+            text += strings().chatUndoManagerChatLeftCountable(leftChatCount)
         }
         
         if leftChannelCount > 0 {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChannelLeftCountable(leftChannelCount)
+            text += strings().chatUndoManagerChannelLeftCountable(leftChannelCount)
         }
         if deleteCount > 0 {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChatsDeletedCountable(deleteCount)
+            text += strings().chatUndoManagerChatsDeletedCountable(deleteCount)
         }
         if deleteChannelCount > 0 {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChannelDeletedCountable(deleteChannelCount)
+            text += strings().chatUndoManagerChannelDeletedCountable(deleteChannelCount)
         }
         if clearingCount > 0 {
             if !text.isEmpty {
                 text += ", "
             }
-            text += L10n.chatUndoManagerChatsHistoryClearedCountable(clearingCount)
+            text += strings().chatUndoManagerChatsHistoryClearedCountable(clearingCount)
         }
         return text
     }
@@ -423,11 +423,11 @@ final class ChatUndoManager  {
         return status
     }
     
-    func clearHistoryInteractively(postbox: Postbox, peerId: PeerId, type: InteractiveHistoryClearingType = .forLocalPeer) {
-        _ = TelegramCore.clearHistoryInteractively(postbox: postbox, peerId: peerId, type: type).start()
+    func clearHistoryInteractively(engine: TelegramEngine, peerId: PeerId, type: InteractiveHistoryClearingType = .forLocalPeer) {
+        _ = engine.messages.clearHistoryInteractively(peerId: peerId, type: type).start()
     }
-    func removePeerChat(account: Account, peerId: PeerId, type: ChatUndoActionType, reportChatSpam: Bool, deleteGloballyIfPossible: Bool = false) {
-        _ = TelegramCore.removePeerChat(account: account, peerId: peerId, reportChatSpam: false, deleteGloballyIfPossible: deleteGloballyIfPossible).start()
+    func removePeerChat(engine: TelegramEngine, peerId: PeerId, type: ChatUndoActionType, reportChatSpam: Bool, deleteGloballyIfPossible: Bool = false) {
+        _ = engine.peers.removePeerChat(peerId: peerId, reportChatSpam: false, deleteGloballyIfPossible: deleteGloballyIfPossible).start()
     }
     
     func invokeNow(for peerId: PeerId, type: ChatUndoActionType) {

@@ -8,10 +8,11 @@
 
 import Cocoa
 import TelegramCore
-import SyncCore
+import InAppVideoServices
 import Postbox
 import TGUIKit
 import SwiftSignalKit
+import InAppSettings
 
 class WPArticleLayout: WPLayout {
     
@@ -29,7 +30,7 @@ class WPArticleLayout: WPLayout {
     private(set) var groupLayout: GroupedLayout?
     private(set) var parameters:[ChatMediaLayoutParameters] = []
 
-    init(with content: TelegramMediaWebpageLoadedContent, context: AccountContext, chatInteraction:ChatInteraction, parent:Message, fontSize: CGFloat, presentation: WPLayoutPresentation, approximateSynchronousValue: Bool, downloadSettings: AutomaticMediaDownloadSettings, autoplayMedia: AutoplayMediaPreferences) {
+    init(with content: TelegramMediaWebpageLoadedContent, context: AccountContext, chatInteraction:ChatInteraction, parent:Message, fontSize: CGFloat, presentation: WPLayoutPresentation, approximateSynchronousValue: Bool, downloadSettings: AutomaticMediaDownloadSettings, autoplayMedia: AutoplayMediaPreferences, theme: TelegramPresentationTheme, mayCopyText: Bool) {
         if let duration = content.duration {
             self.durationAttributed = .initialize(string: String.durationTransformed(elapsed: duration), color: .white, font: .normal(.text))
         } else {
@@ -55,7 +56,7 @@ class WPArticleLayout: WPLayout {
         
         self.downloadSettings = downloadSettings
         
-        super.init(with: content, context: context, chatInteraction: chatInteraction, parent:parent, fontSize: fontSize, presentation: presentation, approximateSynchronousValue: approximateSynchronousValue)
+        super.init(with: content, context: context, chatInteraction: chatInteraction, parent:parent, fontSize: fontSize, presentation: presentation, approximateSynchronousValue: approximateSynchronousValue, mayCopyText: mayCopyText)
         
         if let mediaCount = mediaCount, mediaCount > 1 {
             var instantMedias = Array(instantPageMedias(for: parent.media[0] as! TelegramMediaWebpage).suffix(10))
@@ -94,7 +95,7 @@ class WPArticleLayout: WPLayout {
                     
                 }, showMessage: { [weak chatInteraction] _ in
                     chatInteraction?.focusMessageId(nil, parent.id, .CenterEmpty)
-                }, isWebpage: chatInteraction.isLogInteraction, presentation: .make(for: message, account: context.account, renderType: presentation.renderType), media: media, automaticDownload: downloadSettings.isDownloable(message), autoplayMedia: autoplayMedia)
+                }, isWebpage: chatInteraction.isLogInteraction, presentation: .make(for: message, account: context.account, renderType: presentation.renderType, theme: theme), media: media, automaticDownload: downloadSettings.isDownloable(message), autoplayMedia: autoplayMedia)
                 
                 weakParameters = parameters
                 
@@ -188,15 +189,15 @@ class WPArticleLayout: WPLayout {
                 case let .wallpaper(_, _, preview):
                     switch preview {
                     case let .slug(_, settings):
-                        if settings.color != nil {
+                        if !settings.colors.isEmpty {
                             var patternIntensity: CGFloat = 0.5
                             
-                            let color = settings.color ?? NSColor(rgb: 0xd6e2ee, alpha: 0.5).argb
+                            let color = settings.colors.first ?? NSColor(rgb: 0xd6e2ee, alpha: 0.5).argb
                             if let intensity = settings.intensity {
                                 patternIntensity = CGFloat(intensity) / 100.0
                             }
-                            if let bottomColor = settings.bottomColor {
-                                emptyColor = .gradient(top: NSColor(argb: color).withAlphaComponent(patternIntensity), bottom: NSColor(rgb: bottomColor).withAlphaComponent(patternIntensity), rotation: settings.rotation)
+                            if settings.colors.count > 1 {
+                                emptyColor = .gradient(colors: settings.colors.map { NSColor(argb: $0) }, intensity: patternIntensity, rotation: settings.rotation)
                             } else {
                                 emptyColor = .color(NSColor(argb: color))
                             }

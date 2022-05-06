@@ -10,7 +10,7 @@ import Cocoa
 import TGUIKit
 import SwiftSignalKit
 import TelegramCore
-import SyncCore
+import Localization
 import Postbox
 
 class SelectAccountView: Control {
@@ -570,7 +570,7 @@ class SESelectController: GenericViewController<ShareModalView>, Notifable {
                 let signal: Signal<([Peer], Peer), NoError>
                 
                 if search.request.isEmpty {
-                    signal = combineLatest(recentPeers(account: account) |> map { recent -> [Peer] in
+                    signal = combineLatest(context.engine.peers.recentPeers() |> map { recent -> [Peer] in
                         switch recent {
                         case .disabled:
                             return []
@@ -582,7 +582,9 @@ class SESelectController: GenericViewController<ShareModalView>, Notifable {
                 } else {
                     let foundLocalPeers = account.postbox.searchPeers(query: search.request.lowercased()) |> map {$0.compactMap { $0.chatMainPeer} }
                     
-                    let foundRemotePeers:Signal<[Peer], NoError> = .single([]) |> then ( searchPeers(account: account, query: search.request.lowercased()) |> map { $0.map{$0.peer} + $1.map{$0.peer} } )
+                    
+                    
+                    let foundRemotePeers:Signal<[Peer], NoError> = .single([]) |> then ( context.engine.contacts.searchRemotePeers(query: search.request.lowercased()) |> map { $0.map{$0.peer} + $1.map{$0.peer} } )
 
                     signal = combineLatest(combineLatest(foundLocalPeers, foundRemotePeers) |> map {$0 + $1}, account.postbox.loadedPeerWithId(account.peerId))
                     

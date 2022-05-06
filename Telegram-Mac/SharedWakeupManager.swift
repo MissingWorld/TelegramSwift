@@ -10,7 +10,7 @@ import Cocoa
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 
 
 private struct AccountTasks {
@@ -116,12 +116,20 @@ class SharedWakeupManager {
         
         for account in accounts {
             if !ringingStatesActivated.contains(account.id) {
-                _ = (account.callSessionManager.ringingStates() |> deliverOnMainQueue).start(next: { states in
+                
+                let combine = combineLatest(queue: .mainQueue(), account.stateManager.isUpdating, account.callSessionManager.ringingStates())
+                
+                _ = combine.start(next: { isUpdating, states in
+                    if isUpdating {
+                        return
+                    }
                     if let state = states.first {
                         if self.sharedContext.hasActiveCall {
                             account.callSessionManager.drop(internalId: state.id, reason: .busy, debugLog: .single(nil))
                         } else {
-                            showCallWindow(PCallSession(account: account, sharedContext: self.sharedContext, isOutgoing: false, peerId: state.peerId, id: state.id, initialState: nil, startWithVideo: state.isVideo, isVideoPossible: state.isVideoPossible))
+                            if let accountContext = appDelegate?.activeContext(for: account.id) {
+                                showCallWindow(PCallSession(accountContext: accountContext, account: account, isOutgoing: false, peerId: state.peerId, id: state.id, initialState: nil, startWithVideo: state.isVideo, isVideoPossible: state.isVideoPossible))
+                            }
                         }
                     }
                 })
@@ -136,7 +144,10 @@ class SharedWakeupManager {
         for (account, primary, tasks) in self.accountsAndTasks {
             account.shouldBeServiceTaskMaster.set(.single(.always))
             account.shouldExplicitelyKeepWorkerConnections.set(.single(tasks.backgroundAudio))
-            account.shouldKeepOnlinePresence.set(.single(primary && self.inForeground))
+            
+            let based = appDelegate?.supportAccountContextValue?.find(account.id)
+            
+            account.shouldKeepOnlinePresence.set(.single((primary || based != nil) && self.inForeground))
             account.shouldKeepBackgroundDownloadConnections.set(.single(tasks.backgroundDownloads))
             
             if !stateManagmentReseted.contains(account.id) {

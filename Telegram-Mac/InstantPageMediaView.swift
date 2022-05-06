@@ -10,9 +10,9 @@ import Cocoa
 import TGUIKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 import SwiftSignalKit
-import SyncCore
+
 final class InstantPageMediaView: View, InstantPageView {
     private let context: AccountContext
     let media: InstantPageMedia
@@ -115,7 +115,7 @@ final class InstantPageMediaView: View, InstantPageView {
             })
             
             switch status {
-            case let .Fetching(_, progress):
+            case let .Fetching(_, progress), let .Paused(progress):
                 self.progressView.isHidden = false
                 self.progressView.state = .Fetching(progress: progress, force: false)
             case .Local:

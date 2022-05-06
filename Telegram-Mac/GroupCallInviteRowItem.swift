@@ -30,7 +30,7 @@ final class GroupCallInviteRowItem : GeneralRowItem {
     }
     
     var isVertical: Bool {
-        return videoMode && (width == 80 || width > fullScreenThreshold)
+        return false
     }
     
     override var hasBorder: Bool {
@@ -104,14 +104,14 @@ private final class GroupCallInviteRowView : GeneralContainableRowView {
         
         textView.change(opacity: item.isVertical ? 0 : 1, animated: animated)
         
-        let layout = TextViewLayout(.initialize(string: L10n.voiceChatInviteInviteMembers, color: GroupCallTheme.customTheme.textColor, font: .normal(.title)))
+        let layout = TextViewLayout(.initialize(string: strings().voiceChatInviteInviteMembers, color: GroupCallTheme.customTheme.textColor, font: .normal(.title)))
         layout.measure(width: .greatestFiniteMagnitude)
         textView.update(layout)
 
         self.layout()
         
         if item.isVertical {
-            thumbView.change(pos: NSMakePoint(floorToScreenPixels(backingScaleFactor, (80 - thumbView.frame.width) / 2), floorToScreenPixels(backingScaleFactor, (containerView.frame.height - thumbView.frame.height) / 2)), animated: animated)
+            thumbView.change(pos: NSMakePoint(floorToScreenPixels(backingScaleFactor, (160 - thumbView.frame.width) / 2), floorToScreenPixels(backingScaleFactor, (containerView.frame.height - thumbView.frame.height) / 2)), animated: animated)
         } else {
             thumbView.change(pos: NSMakePoint(item.viewType.innerInset.left, floorToScreenPixels(backingScaleFactor, (containerView.frame.height - thumbView.frame.height) / 2)), animated: animated)
             textView.change(pos: NSMakePoint(thumbView.frame.maxX + 20, floorToScreenPixels(backingScaleFactor, (containerView.frame.height - textView.frame.height) / 2)), animated: animated)

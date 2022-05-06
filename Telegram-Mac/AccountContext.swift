@@ -10,11 +10,14 @@ import Foundation
 import SwiftSignalKit
 import Postbox
 import TelegramCore
-import SyncCore
+import ColorPalette
 import TGUIKit
-import SyncCore
+import InAppSettings
+import ThemeSettings
+import Reactions
+import FetchManager
 
-protocol ChatLocationContextHolder: class {
+protocol ChatLocationContextHolder: AnyObject {
 }
 
 
@@ -50,9 +53,7 @@ final class AccountContextBindings {
     let entertainment:()->EntertainmentViewController
     let needFullsize:()->Void
     let displayUpgradeProgress:(CGFloat)->Void
-    let callSession: ()->PCallSession?
-    let groupCall: ()->GroupCallContext?
-    init(rootNavigation: @escaping() -> MajorNavigationController = { fatalError() }, mainController: @escaping() -> MainViewController = { fatalError() }, showControllerToaster: @escaping(ControllerToaster, Bool) -> Void = { _, _ in fatalError() }, globalSearch: @escaping(String) -> Void = { _ in fatalError() }, entertainment: @escaping()->EntertainmentViewController = { fatalError() }, switchSplitLayout: @escaping(SplitViewState)->Void = { _ in fatalError() }, needFullsize: @escaping() -> Void = { fatalError() }, displayUpgradeProgress: @escaping(CGFloat)->Void = { _ in fatalError() }, callSession: @escaping()->PCallSession? = { return nil }, groupCall: @escaping()->GroupCallContext? = { return nil }) {
+    init(rootNavigation: @escaping() -> MajorNavigationController = { fatalError() }, mainController: @escaping() -> MainViewController = { fatalError() }, showControllerToaster: @escaping(ControllerToaster, Bool) -> Void = { _, _ in fatalError() }, globalSearch: @escaping(String) -> Void = { _ in fatalError() }, entertainment: @escaping()->EntertainmentViewController = { fatalError() }, switchSplitLayout: @escaping(SplitViewState)->Void = { _ in fatalError() }, needFullsize: @escaping() -> Void = { fatalError() }, displayUpgradeProgress: @escaping(CGFloat)->Void = { _ in fatalError() }) {
         self.rootNavigation = rootNavigation
         self.mainController = mainController
         self.showControllerToaster = showControllerToaster
@@ -61,8 +62,6 @@ final class AccountContextBindings {
         self.switchSplitLayout = switchSplitLayout
         self.needFullsize = needFullsize
         self.displayUpgradeProgress = displayUpgradeProgress
-        self.callSession = callSession
-        self.groupCall = groupCall
     }
     #endif
 }
@@ -75,26 +74,49 @@ final class AccountContext {
     let sharedContext: SharedAccountContext
     let account: Account
     let window: Window
+    
+    var bindings: AccountContextBindings = AccountContextBindings()
+
 
     #if !SHARE
     let fetchManager: FetchManager
     let diceCache: DiceCache
     let cachedGroupCallContexts: AccountGroupCallContextCacheImpl
+    let networkStatusManager: NetworkStatusManager
     #endif
     private(set) var timeDifference:TimeInterval  = 0
     #if !SHARE
-    let peerChannelMemberCategoriesContextsManager = PeerChannelMemberCategoriesContextsManager()
+    
+    var audioPlayer:APController?
+    
+    let peerChannelMemberCategoriesContextsManager: PeerChannelMemberCategoriesContextsManager
     let chatUndoManager = ChatUndoManager()
     let blockedPeersContext: BlockedPeersContext
-    let activeSessionsContext: ActiveSessionsContext
     let cacheCleaner: AccountClearCache
+    let activeSessionsContext: ActiveSessionsContext
+    let webSessions: WebSessionsContext
+    let reactions: Reactions
+    private(set) var reactionSettings: ReactionSettings = ReactionSettings.default
+    private let reactionSettingsDisposable = MetaDisposable()
+    private var chatInterfaceTempState:[PeerId : ChatInterfaceTempState] = [:]
     
     
- //   let walletPasscodeTimeoutContext: WalletPasscodeTimeoutContext
+    private let _chatThemes: Promise<[(String, TelegramPresentationTheme)]> = Promise([])
+    var chatThemes: Signal<[(String, TelegramPresentationTheme)], NoError> {
+        return _chatThemes.get() |> deliverOnMainQueue
+    }
+    
+    
+    
+    private let _cloudThemes:Promise<CloudThemesCachedData> = Promise()
+    var cloudThemes:Signal<CloudThemesCachedData, NoError> {
+        return _cloudThemes.get() |> deliverOnMainQueue
+    }
     #endif
     
     let cancelGlobalSearch:ValuePromise<Bool> = ValuePromise(ignoreRepeated: false)
     
+    private(set) var isSupport: Bool = false
 
     
     var isCurrent: Bool = false {
@@ -115,17 +137,18 @@ final class AccountContext {
     let hasPassportSettings: Promise<Bool> = Promise(false)
 
     private var _recentlyPeerUsed:[PeerId] = []
-
+    private let _recentlyUserPeerIds = ValuePromise<[PeerId]>([])
+    var recentlyUserPeerIds:Signal<[PeerId], NoError> {
+        return _recentlyUserPeerIds.get()
+    }
+    
     private(set) var recentlyPeerUsed:[PeerId] {
         set {
             _recentlyPeerUsed = newValue
+            _recentlyUserPeerIds.set(newValue)
         }
         get {
-            if _recentlyPeerUsed.count > 2 {
-                return Array(_recentlyPeerUsed.prefix(through: 2))
-            } else {
-                return _recentlyPeerUsed
-            }
+            return _recentlyPeerUsed
         }
     }
     
@@ -175,7 +198,6 @@ final class AccountContext {
         return _contentSettings.with { $0 }
     }
     
-   // public let tonContext: StoredTonContext!
     
     public var closeFolderFirst: Bool = false
     
@@ -183,50 +205,57 @@ final class AccountContext {
     let engine: TelegramEngine
 
     
-    //, tonContext: StoredTonContext?
-    init(sharedContext: SharedAccountContext, window: Window, account: Account) {
+    init(sharedContext: SharedAccountContext, window: Window, account: Account, isSupport: Bool = false) {
         self.sharedContext = sharedContext
         self.account = account
         self.window = window
         self.engine = TelegramEngine(account: account)
-       // self.tonContext = tonContext
+        self.isSupport = isSupport
         #if !SHARE
-        self.diceCache = DiceCache(postbox: account.postbox, network: account.network)
-        self.fetchManager = FetchManager(postbox: account.postbox)
+        self.peerChannelMemberCategoriesContextsManager = PeerChannelMemberCategoriesContextsManager(self.engine, account: account)
+        self.diceCache = DiceCache(postbox: account.postbox, engine: self.engine)
+        self.fetchManager = FetchManagerImpl(postbox: account.postbox, storeManager: DownloadedMediaStoreManagerImpl(postbox: account.postbox, accountManager: sharedContext.accountManager))
         self.blockedPeersContext = BlockedPeersContext(account: account)
-        self.activeSessionsContext = ActiveSessionsContext(account: account)
         self.cacheCleaner = AccountClearCache(account: account)
         self.cachedGroupCallContexts = AccountGroupCallContextCacheImpl()
-     //   self.walletPasscodeTimeoutContext = WalletPasscodeTimeoutContext(postbox: account.postbox)
+        self.activeSessionsContext = engine.privacy.activeSessions()
+        self.webSessions = engine.privacy.webSessions()
+        self.networkStatusManager = NetworkStatusManager(account: account, window: window, sharedContext: sharedContext)
+        self.reactions = Reactions(engine)
         #endif
         
+        
+        
+        let engine = self.engine
         
         repliesPeerId = account.testingEnvironment ? test_repliesPeerId : prod_repliesPeerId
         
         let limitConfiguration = _limitConfiguration
         prefDisposable.add(account.postbox.preferencesView(keys: [PreferencesKeys.limitsConfiguration]).start(next: { view in
-            _ = limitConfiguration.swap(view.values[PreferencesKeys.limitsConfiguration] as? LimitsConfiguration ?? LimitsConfiguration.defaultValue)
+            _ = limitConfiguration.swap(view.values[PreferencesKeys.limitsConfiguration]?.get(LimitsConfiguration.self) ?? LimitsConfiguration.defaultValue)
         }))
         let preloadGifsDisposable = self.preloadGifsDisposable
         let appConfiguration = _appConfiguration
         prefDisposable.add(account.postbox.preferencesView(keys: [PreferencesKeys.appConfiguration]).start(next: { view in
-            let configuration = view.values[PreferencesKeys.appConfiguration] as? AppConfiguration ?? AppConfiguration.defaultValue
+            let configuration = view.values[PreferencesKeys.appConfiguration]?.get(AppConfiguration.self) ?? AppConfiguration.defaultValue
             _ = appConfiguration.swap(configuration)
             
             
         }))
         
+        
+        
         #if !SHARE
         let signal:Signal<Void, NoError> = Signal { subscriber in
             
             let signal: Signal<Never, NoError> = account.postbox.transaction {
-                return $0.getPreferencesEntry(key: PreferencesKeys.appConfiguration) as? AppConfiguration ?? AppConfiguration.defaultValue
+                return $0.getPreferencesEntry(key: PreferencesKeys.appConfiguration)?.get(AppConfiguration.self) ?? AppConfiguration.defaultValue
             } |> mapToSignal { configuration in
                 let value = GIFKeyboardConfiguration.with(appConfiguration: configuration)
                 var signals = value.emojis.map {
-                    searchGifs(account: account, query: $0)
+                    engine.stickers.searchGifs(query: $0)
                 }
-                signals.insert(searchGifs(account: account, query: ""), at: 0)
+                signals.insert(engine.stickers.searchGifs(query: ""), at: 0)
                 return combineLatest(signals) |> ignoreValues
             }
             
@@ -239,14 +268,158 @@ final class AccountContext {
             }
         }
         
-        let updated = (signal |> then(.complete() |> suspendAwareDelay(20.0 * 60.0, queue: Queue.concurrentDefaultQueue()))) |> restart
+        let updated = (signal |> then(.complete() |> suspendAwareDelay(20.0 * 60.0, queue: .concurrentDefaultQueue()))) |> restart
         preloadGifsDisposable.set(updated.start())
+        
+       
+        let chatThemes: Signal<[(String, TelegramPresentationTheme)], NoError> = combineLatest(appearanceSignal, engine.themes.getChatThemes(accountManager: sharedContext.accountManager)) |> mapToSignal { appearance, themes in
+            var signals:[Signal<(String, TelegramPresentationTheme), NoError>] = []
+            
+            for theme in themes {
+                let effective = theme.effectiveSettings(isDark: appearance.presentation.dark)
+                if let settings = effective, let emoji = theme.emoticon?.fixed {
+                    let newTheme = appearance.presentation.withUpdatedColors(settings.palette)
+                    if let wallpaper = settings.wallpaper?.uiWallpaper {
+                        signals.append(moveWallpaperToCache(postbox: account.postbox, wallpaper: wallpaper) |> map { wallpaper in
+                            return (emoji, newTheme.withUpdatedWallpaper(.init(wallpaper: wallpaper, associated: nil)))
+                        })
+                    } else {
+                        signals.append(.single((emoji, newTheme)))
+                    }
+                }
+            }
+            
+            let first = Signal<[(String, TelegramPresentationTheme)], NoError>.single([])
+            return first |> then(combineLatest(signals)) |> map { values in
+                var dict: [(String, TelegramPresentationTheme)] = []
+                for value in values {
+                    dict.append((value.0, value.1))
+                }
+                return dict
+            }
+        }
+        self._chatThemes.set((chatThemes |> then(.complete() |> suspendAwareDelay(20.0 * 60.0, queue: .concurrentDefaultQueue()))) |> restart)
+        
+        
+        let cloudThemes: Signal<[TelegramTheme], NoError> = telegramThemes(postbox: account.postbox, network: account.network, accountManager: sharedContext.accountManager) |> distinctUntilChanged(isEqual: { lhs, rhs in
+            return lhs.count == rhs.count
+        })
+        
+        let themesList: Signal<([TelegramTheme], [CloudThemesCachedData.Key : [SmartThemeCachedData]]), NoError> = cloudThemes |> mapToSignal { themes in
+            var signals:[Signal<(CloudThemesCachedData.Key, Int64, TelegramPresentationTheme), NoError>] = []
+            
+            for key in CloudThemesCachedData.Key.all {
+                for theme in themes {
+                    let effective = theme.effectiveSettings(for: key.colors)
+                    if let settings = effective, theme.isDefault, let _ = theme.emoticon {
+                        let newTheme = appAppearance.presentation.withUpdatedColors(settings.palette)
+                        if let wallpaper = settings.wallpaper?.uiWallpaper {
+                            signals.append(moveWallpaperToCache(postbox: account.postbox, wallpaper: wallpaper) |> map { wallpaper in
+                                return (key, theme.id, newTheme.withUpdatedWallpaper(.init(wallpaper: wallpaper, associated: nil)))
+                            })
+                        } else {
+                            signals.append(.single((key, theme.id, newTheme)))
+                        }
+                    }
+                }
+            }
+            
+            return combineLatest(signals) |> mapToSignal { values in
+                
+                var signals: [Signal<(CloudThemesCachedData.Key, Int64, SmartThemeCachedData), NoError>] = []
+                for value in values {
+                    let bubbled = value.0.bubbled
+                    let theme = value.2
+                    let themeId = value.1
+                    let key = value.0
+                    if let telegramTheme = themes.first(where: { $0.id == value.1 }) {
+                        signals.append(generateChatThemeThumb(palette: theme.colors, bubbled: bubbled, backgroundMode: bubbled ? theme.backgroundMode : .color(color: theme.colors.chatBackground)) |> map {
+                            (key, themeId, SmartThemeCachedData(source: .cloud(telegramTheme), data: .init(appTheme: theme, previewIcon: $0, emoticon: telegramTheme.emoticon ?? telegramTheme.title)))
+                        })
+                    }
+                }
+                return combineLatest(signals) |> map { values in
+                    var data:[CloudThemesCachedData.Key: [SmartThemeCachedData]] = [:]
+                    for value in values {
+                        var array:[SmartThemeCachedData] = data[value.0] ?? []
+                        array.append(value.2)
+                        data[value.0] = array
+                    }
+                    return (themes, data)
+
+                }
+            }
+        }
+        
+        
+        let defaultAndCustom: Signal<(SmartThemeCachedData, SmartThemeCachedData?), NoError> = combineLatest(appearanceSignal, themeSettingsView(accountManager: sharedContext.accountManager)) |> map { appearance, value -> (ThemePaletteSettings, TelegramPresentationTheme, ThemePaletteSettings?) in
+            
+            let `default` = value.withUpdatedToDefault(dark: appearance.presentation.dark)
+                .withUpdatedCloudTheme(nil)
+                .withUpdatedPalette(appearance.presentation.colors.parent.palette)
+                .installDefaultWallpaper()
+            
+            
+            let  customData = value.withUpdatedCloudTheme(appearance.presentation.cloudTheme)
+                .withUpdatedPalette(appearance.presentation.colors)
+                .installDefaultWallpaper()
+            
+            var custom: ThemePaletteSettings?
+            if let cloud = customData.cloudTheme, cloud.settings == nil {
+                custom = customData
+            } else if let cloud = customData.cloudTheme {
+                if let settings = cloud.effectiveSettings(for: value.palette.parent.palette) {
+                    if customData.wallpaper.wallpaper != settings.wallpaper?.uiWallpaper {
+                        custom = customData
+                    }
+                }
+            }
+            
+            return (`default`, appearance.presentation, custom)
+        } |> deliverOn(.concurrentBackgroundQueue()) |> mapToSignal { (value, theme, custom) in
+            
+            var signals:[Signal<SmartThemeCachedData, NoError>] = []
+            
+            let  values = [value, custom].compactMap { $0 }
+            for (i, value) in values.enumerated() {
+                let newTheme = theme.withUpdatedColors(value.palette).withUpdatedWallpaper(value.wallpaper)
+                signals.append(moveWallpaperToCache(postbox: account.postbox, wallpaper: value.wallpaper.wallpaper) |> mapToSignal { _ in
+                    return generateChatThemeThumb(palette: newTheme.colors, bubbled: value.bubbled, backgroundMode: value.bubbled ? newTheme.backgroundMode : .color(color: newTheme.colors.chatBackground))
+                } |> map { previewIcon in
+                    return SmartThemeCachedData(source: .local(value.palette), data: .init(appTheme: newTheme, previewIcon: previewIcon, emoticon: i == 0 ? "🏠" : "🎨"))
+                })
+            }
+            
+            return combineLatest(signals) |> map { ($0[0], $0.count == 2 ? $0[1] : nil) }
+        }
+        
+        _cloudThemes.set(cloudThemes |> map { cloudThemes in
+            return .init(themes: cloudThemes, list: [:], default: nil, custom: nil)
+        })
+//        _cloudThemes.set(.single(.init(themes: [], list: [:], default: nil, custom: nil)))
+
+        let settings = account.postbox.preferencesView(keys: [PreferencesKeys.reactionSettings])
+           |> map { preferencesView -> ReactionSettings in
+               let reactionSettings: ReactionSettings
+               if let entry = preferencesView.values[PreferencesKeys.reactionSettings], let value = entry.get(ReactionSettings.self) {
+                   reactionSettings = value
+               } else {
+                   reactionSettings = .default
+               }
+               return reactionSettings
+           } |> deliverOnMainQueue
+        
+        reactionSettingsDisposable.set(settings.start(next: { [weak self] settings in
+            self?.reactionSettings = settings
+        }))
         
         #endif
         
+        
+        
         let autoplayMedia = _autoplayMedia
         prefDisposable.add(account.postbox.preferencesView(keys: [ApplicationSpecificPreferencesKeys.autoplayMedia]).start(next: { view in
-            _ = autoplayMedia.swap(view.values[ApplicationSpecificPreferencesKeys.autoplayMedia] as? AutoplayMediaPreferences ?? AutoplayMediaPreferences.defaultSettings)
+            _ = autoplayMedia.swap(view.values[ApplicationSpecificPreferencesKeys.autoplayMedia]?.get(AutoplayMediaPreferences.self) ?? AutoplayMediaPreferences.defaultSettings)
         }))
         
         let contentSettings = _contentSettings
@@ -268,12 +441,14 @@ final class AccountContext {
                 }
         }))
         
-        
-        let cloudSignal = themeUnmodifiedSettings(accountManager: sharedContext.accountManager) |> distinctUntilChanged(isEqual: { lhs, rhs -> Bool in
-            return lhs.cloudTheme == rhs.cloudTheme
+        let passthrough: Atomic<Bool> = Atomic(value: false)
+        let cloudSignal = appearanceSignal |> distinctUntilChanged(isEqual: { lhs, rhs -> Bool in
+            return lhs.presentation.cloudTheme == rhs.presentation.cloudTheme
+        }) |> take(until: { _ in
+            return .init(passthrough: passthrough.swap(true), complete: false)
         })
         |> map { value in
-            return (value.cloudTheme, value.palette)
+            return (value.presentation.cloudTheme, value.presentation.colors)
         }
         |> deliverOnMainQueue
         
@@ -291,17 +466,20 @@ final class AccountContext {
         NotificationCenter.default.addObserver(self, selector: #selector(updateKeyWindow), name: NSWindow.didBecomeKeyNotification, object: window)
         NotificationCenter.default.addObserver(self, selector: #selector(updateKeyWindow), name: NSWindow.didResignKeyNotification, object: window)
         
+       
         
         #if !SHARE
         var freeSpaceSignal:Signal<UInt64?, NoError> = Signal { subscriber in
             
-            subscriber.putNext(freeSystemGygabytes())
+            subscriber.putNext(freeSystemGigabytes())
             subscriber.putCompletion()
             
             return ActionDisposable {
                 
         }
         } |> runOn(.concurrentDefaultQueue())
+        
+        
         
         freeSpaceSignal = (freeSpaceSignal |> then(.complete() |> suspendAwareDelay(60.0 * 30, queue: Queue.concurrentDefaultQueue()))) |> restart
         
@@ -324,15 +502,20 @@ final class AccountContext {
             
         }))
         
-        account.callSessionManager.updateVersions(versions: OngoingCallContext.versions(includeExperimental: true, includeReference: false).map { version, supportsVideo -> CallSessionManagerImplementationVersion in
+        account.callSessionManager.updateVersions(versions: OngoingCallContext.versions(includeExperimental: true, includeReference: true).map { version, supportsVideo -> CallSessionManagerImplementationVersion in
             CallSessionManagerImplementationVersion(version: version, supportsVideo: supportsVideo)
         })
+        
         
         #endif
     }
     
     @objc private func updateKeyWindow() {
         self.isKeyWindowValue.set(window.isKeyWindow)
+    }
+    
+    func focus() {
+        window.makeKeyAndOrderFront(nil)
     }
     
     private func updateTheme(_ update: ApplyThemeUpdate) {
@@ -369,6 +552,18 @@ final class AccountContext {
         _temporartPassword = nil
         temporaryPwdDisposable.set(nil)
     }
+    #if !SHARE
+    func setChatInterfaceTempState(_ state: ChatInterfaceTempState, for peerId: PeerId) {
+        self.chatInterfaceTempState[peerId] = state
+    }
+    func getChatInterfaceTempState(_ peerId: PeerId?) -> ChatInterfaceTempState? {
+        if let peerId = peerId {
+            return self.chatInterfaceTempState[peerId]
+        } else {
+            return nil
+        }
+    }
+    #endif
     
     func setTemporaryPwd(_ password: String) -> Void {
         _temporartPassword = password
@@ -395,14 +590,20 @@ final class AccountContext {
         NotificationCenter.default.removeObserver(self)
         #if !SHARE
       //  self.walletPasscodeTimeoutContext.clear()
+        self.networkStatusManager.cleanup()
+        self.audioPlayer?.cleanup()
+        self.audioPlayer = nil
         self.diceCache.cleanup()
+        _chatThemes.set(.single([]))
+        _cloudThemes.set(.single(.init(themes: [], list: [:], default: nil, custom: nil)))
+        reactionSettingsDisposable.dispose()
         #endif
     }
    
     
     func checkFirstRecentlyForDuplicate(peerId:PeerId) {
         if let index = recentlyPeerUsed.firstIndex(of: peerId), index == 0 {
-            recentlyPeerUsed.remove(at: index)
+         //   recentlyPeerUsed.remove(at: index)
         }
     }
     
@@ -411,19 +612,16 @@ final class AccountContext {
             recentlyPeerUsed.remove(at: index)
         }
         recentlyPeerUsed.insert(peerId, at: 0)
-        if recentlyPeerUsed.count > 4 {
-            recentlyPeerUsed = Array(recentlyPeerUsed.prefix(through: 4))
-        }
     }
     
     
     func chatLocationInput(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> ChatLocationInput {
         switch location {
         case let .peer(peerId):
-            return .peer(peerId)
+            return .peer(peerId: peerId)
         case let .replyThread(data):
             let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
-            return .external(data.messageId.peerId, makeMessageThreadId(data.messageId), context.state)
+            return .thread(peerId: data.messageId.peerId, threadId: makeMessageThreadId(data.messageId), data: context.state)
         }
     }
     
@@ -437,12 +635,34 @@ final class AccountContext {
         }
     }
 
+    public func chatLocationUnreadCount(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>) -> Signal<Int, NoError> {
+        switch location {
+        case let .peer(peerId):
+            let unreadCountsKey: PostboxViewKey = .unreadCounts(items: [.peer(peerId), .total(nil)])
+            return self.account.postbox.combinedView(keys: [unreadCountsKey])
+            |> map { views in
+                var unreadCount: Int32 = 0
+
+                if let view = views.views[unreadCountsKey] as? UnreadMessageCountsView {
+                    if let count = view.count(for: .peer(peerId)) {
+                        unreadCount = count
+                    }
+                }
+
+                return Int(unreadCount)
+            }
+        case let .replyThread(data):
+            let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
+            return context.unreadCount
+        }
+    }
+
 
     
     func applyMaxReadIndex(for location: ChatLocation, contextHolder: Atomic<ChatLocationContextHolder?>, messageIndex: MessageIndex) {
         switch location {
         case .peer:
-            let _ = applyMaxReadIndexInteractively(postbox: self.account.postbox, stateManager: self.account.stateManager, index: messageIndex).start()
+            let _ = self.engine.messages.applyMaxReadIndexInteractively(index: messageIndex).start()
         case let .replyThread(data):
             let context = chatLocationContext(holder: contextHolder, account: self.account, data: data)
             context.applyMaxReadIndex(messageIndex: messageIndex)
@@ -454,8 +674,8 @@ final class AccountContext {
 
     
     #if !SHARE
-    func composeCreateGroup() {
-        createGroup(with: self)
+    func composeCreateGroup(selectedPeers:Set<PeerId> = Set()) {
+        createGroup(with: self, selectedPeers: selectedPeers)
     }
     func composeCreateChannel() {
         createChannel(with: self)
@@ -463,33 +683,34 @@ final class AccountContext {
     func composeCreateSecretChat() {
         let account = self.account
         let window = self.window
+        let engine = self.engine
         let confirmationImpl:([PeerId])->Signal<Bool, NoError> = { peerIds in
             if let first = peerIds.first, peerIds.count == 1 {
                 return account.postbox.loadedPeerWithId(first) |> deliverOnMainQueue |> mapToSignal { peer in
-                    return confirmSignal(for: window, information: L10n.composeConfirmStartSecretChat(peer.displayTitle))
+                    return confirmSignal(for: window, information: strings().composeConfirmStartSecretChat(peer.displayTitle))
                 }
             }
-            return confirmSignal(for: window, information: L10n.peerInfoConfirmAddMembers1Countable(peerIds.count))
+            return confirmSignal(for: window, information: strings().peerInfoConfirmAddMembers1Countable(peerIds.count))
         }
-        let select = selectModalPeers(window: window, account: self.account, title: L10n.composeSelectSecretChat, limit: 1, confirmation: confirmationImpl)
+        let select = selectModalPeers(window: window, context: self, title: strings().composeSelectSecretChat, limit: 1, confirmation: confirmationImpl)
         
         let create = select |> map { $0.first! } |> mapToSignal { peerId in
-            return createSecretChat(account: account, peerId: peerId) |> `catch` {_ in .complete()}
+            return engine.peers.createSecretChat(peerId: peerId) |> `catch` {_ in .complete()}
             } |> deliverOnMainQueue |> mapToSignal{ peerId -> Signal<PeerId, NoError> in
-                return showModalProgress(signal: .single(peerId), for: mainWindow)
+                return showModalProgress(signal: .single(peerId), for: window)
         }
         
         _ = create.start(next: { [weak self] peerId in
             guard let `self` = self else {return}
-            self.sharedContext.bindings.rootNavigation().push(ChatController(context: self, chatLocation: .peer(peerId)))
+            self.bindings.rootNavigation().push(ChatController(context: self, chatLocation: .peer(peerId)))
         })
     }
     #endif
 }
 
 
-func downloadAndApplyCloudTheme(context: AccountContext, theme cloudTheme: TelegramTheme, install: Bool = false) -> Signal<Never, Void> {
-    if let cloudSettings = cloudTheme.settings {
+func downloadAndApplyCloudTheme(context: AccountContext, theme cloudTheme: TelegramTheme, palette: ColorPalette? = nil, install: Bool = false) -> Signal<Never, Void> {
+    if let cloudSettings = cloudTheme.effectiveSettings(for: palette ?? theme.colors) {
         return Signal { subscriber in
             #if !SHARE
             let wallpaperDisposable = DisposableSet()
@@ -511,7 +732,7 @@ func downloadAndApplyCloudTheme(context: AccountContext, theme cloudTheme: Teleg
                                 var settings = settings.withUpdatedPalette(palette).withUpdatedCloudTheme(cloudTheme)
                                 var updateDefault:DefaultTheme = palette.isDark ? settings.defaultDark : settings.defaultDay
                                 updateDefault = updateDefault.updateCloud { _ in
-                                    return DefaultCloudTheme(cloud: cloudTheme, palette: palette, wallpaper: AssociatedWallpaper(cloud: cloud, wallpaper: wp))
+                                    return DefaultCloudTheme(cloud: cloudTheme, palette: palette, wallpaper: AssociatedWallpaper(cloud: cloud, wallpaper: wallpaper))
                                 }
                                 settings = palette.isDark ? settings.withUpdatedDefaultDark(updateDefault) : settings.withUpdatedDefaultDay(updateDefault)
                                 settings = settings.withUpdatedDefaultIsDark(palette.isDark)
@@ -716,3 +937,13 @@ private final class ChatLocationContextHolderImpl: ChatLocationContextHolder {
         self.context = ReplyThreadHistoryContext(account: account, peerId: data.messageId.peerId, data: data)
     }
 }
+
+
+/*
+ _ = (strongSelf.postbox.messageAtId(messageId) |> filter { $0?.isCopyProtected() == false } |> map { $0?.media.first as? TelegramMediaFile} |> filter {$0 != nil} |> map {$0!} |> mapToSignal { file -> Signal<Void, NoError> in
+     if !file.isMusic && !file.isAnimated && !file.isVideo && !file.isVoice && !file.isInstantVideo && !file.isAnimatedSticker && !file.isStaticSticker {
+         return copyToDownloads(file, postbox: postbox) |> map { _ in }
+     }
+     return .single(Void())
+ }).start()
+ */

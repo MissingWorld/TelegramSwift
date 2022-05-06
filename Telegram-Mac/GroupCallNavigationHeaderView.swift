@@ -10,7 +10,7 @@ import Foundation
 import TGUIKit
 import SwiftSignalKit
 import Postbox
-import SyncCore
+
 import TelegramCore
 
 
@@ -122,15 +122,11 @@ class GroupCallNavigationHeaderView: CallHeaderBasicView {
             if isVisible {
                 switch state.networkState {
                 case .connected:
-                    if !isMuted {
-                        effectiveLevel = myAudioLevel
-                    } else {
-                        effectiveLevel = audioLevels.reduce(0, { current, value in
-                            return current + value.2
-                        })
-                        if !audioLevels.isEmpty {
-                            effectiveLevel = effectiveLevel / Float(audioLevels.count)
-                        }
+                    effectiveLevel = audioLevels.reduce(0, { current, value in
+                        return current + value.2
+                    })
+                    if !audioLevels.isEmpty {
+                        effectiveLevel = effectiveLevel / Float(audioLevels.count)
                     }
                 case .connecting:
                     effectiveLevel = 0
@@ -153,7 +149,7 @@ class GroupCallNavigationHeaderView: CallHeaderBasicView {
                 self.status = .startsIn(Int(scheduleTimestamp))
                 isConnected = true
             } else {
-                self.status = .text(L10n.voiceChatStatusConnecting, nil)
+                self.status = .text(strings().voiceChatStatusConnecting, nil)
                 isConnected = false
             }
         case .connected:
@@ -161,7 +157,11 @@ class GroupCallNavigationHeaderView: CallHeaderBasicView {
             if let first = data.topParticipants.first(where: { members?.speakingParticipants.contains($0.peer.id) ?? false }) {
                 self.status = .text(first.peer.compactDisplayTitle.prefixWithDots(12), nil)
             } else {
-                self.status = .text(L10n.voiceChatStatusMembersCountable(data.participantCount), nil)
+                if state.isStream, data.participantCount == 0 {
+                    self.status = .text(strings().voiceChatStatusStream.lowercased(), nil)
+                } else {
+                    self.status = .text(strings().voiceChatStatusMembersCountable(data.participantCount), nil)
+                }
             }
             isConnected = true
         }
@@ -185,7 +185,7 @@ class GroupCallNavigationHeaderView: CallHeaderBasicView {
     }
 
     override func getEndText() -> String {
-        return L10n.voiceChatTitleEnd
+        return strings().voiceChatTitleEnd
     }
     
     override init(_ header: NavigationHeader) {

@@ -11,16 +11,17 @@ import TGUIKit
 import Postbox
 import SwiftSignalKit
 import TelegramCore
+import InAppSettings
 
 func filterContextMenuItems(_ filter: ChatListFilter?, context: AccountContext) -> [ContextMenuItem] {
     var items:[ContextMenuItem] = []
     if var filter = filter {
-        items.append(.init(L10n.chatListFilterEdit, handler: {
-            context.sharedContext.bindings.rootNavigation().push(ChatListFilterController(context: context, filter: filter))
-        }))
-        items.append(.init(L10n.chatListFilterAddChats, handler: {
-            showModal(with: ShareModalController(SelectCallbackObject(context, defaultSelectedIds: Set(filter.data.includePeers.peers), additionTopItems: nil, limit: 100, limitReachedText: L10n.chatListFilterIncludeLimitReached, callback: { peerIds in
-                return updateChatListFiltersInteractively(postbox: context.account.postbox, { filters in
+        items.append(.init(strings().chatListFilterEdit, handler: {
+            context.bindings.rootNavigation().push(ChatListFilterController(context: context, filter: filter))
+        }, itemImage: MenuAnimation.menu_edit.value))
+        items.append(.init(strings().chatListFilterAddChats, handler: {
+            showModal(with: ShareModalController(SelectCallbackObject(context, defaultSelectedIds: Set(filter.data.includePeers.peers), additionTopItems: nil, limit: 100, limitReachedText: strings().chatListFilterIncludeLimitReached, callback: { peerIds in
+                return context.engine.peers.updateChatListFiltersInteractively({ filters in
                     var filters = filters
                     filter.data.includePeers.setPeers(Array(peerIds.uniqueElements.prefix(100)))
                     if let index = filters.firstIndex(where: {$0.id == filter.id }) {
@@ -30,21 +31,24 @@ func filterContextMenuItems(_ filter: ChatListFilter?, context: AccountContext) 
                 }) |> ignoreValues
                 
             })), for: context.window)
-        }))
-        items.append(.init(L10n.chatListFilterDelete, handler: {
-            confirm(for: context.window, header: L10n.chatListFilterConfirmRemoveHeader, information: L10n.chatListFilterConfirmRemoveText, okTitle: L10n.chatListFilterConfirmRemoveOK, successHandler: { _ in
-                _ = updateChatListFiltersInteractively(postbox: context.account.postbox, { filters in
+        }, itemImage: MenuAnimation.menu_plus.value))
+        
+        items.append(ContextSeparatorItem())
+        
+        items.append(.init(strings().chatListFilterDelete, handler: {
+            confirm(for: context.window, header: strings().chatListFilterConfirmRemoveHeader, information: strings().chatListFilterConfirmRemoveText, okTitle: strings().chatListFilterConfirmRemoveOK, successHandler: { _ in
+                _ = context.engine.peers.updateChatListFiltersInteractively({ filters in
                     var filters = filters
                     filters.removeAll(where: { $0.id == filter.id })
                     return filters
                 }).start()
             })
             
-        }))
+        }, itemMode: .destruct, itemImage: MenuAnimation.menu_delete.value))
     } else {
-        items.append(.init(L10n.chatListFilterEditFilters, handler: {
-            context.sharedContext.bindings.rootNavigation().push(ChatListFiltersListController(context: context))
-        }))
+        items.append(.init(strings().chatListFilterEditFilters, handler: {
+            context.bindings.rootNavigation().push(ChatListFiltersListController(context: context))
+        }, itemImage: MenuAnimation.menu_edit.value))
     }
     
     return items
@@ -80,6 +84,7 @@ final class LeftSidebarView: View {
 
         visualEffectView.blendingMode = .behindWindow
         visualEffectView.material = .ultraDark
+        visualEffectView.state = .active
        
         updateLocalizationAndTheme(theme: theme)
     }
@@ -200,9 +205,9 @@ class LeftSidebarController: TelegramGenericViewController<LeftSidebarView> {
                 return state.withUpdatedFilter(filter)
             }
             
-            let rootNavigation = context.sharedContext.bindings.rootNavigation()
+            let rootNavigation = context.bindings.rootNavigation()
             
-            let leftController = context.sharedContext.bindings.mainController()
+            let leftController = context.bindings.mainController()
             leftController.chatListNavigation.close(animated: context.sharedContext.layout != .single || rootNavigation.stackCount == 1)
             
             if context.sharedContext.layout == .single {
@@ -217,7 +222,7 @@ class LeftSidebarController: TelegramGenericViewController<LeftSidebarView> {
         
         let previous: Atomic<[AppearanceWrapperEntry<LeftSibarBarEntry>]> = Atomic(value: [])
                 
-        let signal: Signal<TableUpdateTransition, NoError> = combineLatest(queue: prepareQueue, filterData, chatListFilterItems(account: context.account, accountManager: context.sharedContext.accountManager), appearanceSignal) |> map { filterData, badges, appearance in
+        let signal: Signal<TableUpdateTransition, NoError> = combineLatest(queue: prepareQueue, filterData, chatListFilterItems(engine: context.engine, accountManager: context.sharedContext.accountManager), appearanceSignal) |> map { filterData, badges, appearance in
             let entries = leftSidebarEntries(filterData, badges).map { AppearanceWrapperEntry.init(entry: $0, appearance: appearance) }
             return prepareTransition(left: previous.swap(entries), right: entries, initialSize: initialSize.with { $0 }, arguments: arguments)
         } |> deliverOnMainQueue
@@ -235,7 +240,7 @@ class LeftSidebarController: TelegramGenericViewController<LeftSidebarView> {
             let range = NSMakeRange(2, self.genericView.tableView.count - 2)
             
             self.genericView.tableView.resortController = TableResortController(resortRange: range, start: { _ in }, resort: { _ in }, complete: { from, to in
-                _ = updateChatListFiltersInteractively(postbox: context.account.postbox, { filters in
+                _ = context.engine.peers.updateChatListFiltersInteractively({ filters in
                     var filters = filters
                     filters.move(at: from - range.location, to: to - range.location)
                     return filters

@@ -11,7 +11,7 @@ import SwiftSignalKit
 import TGUIKit
 import Postbox
 import TelegramCore
-import SyncCore
+
 
 
 
@@ -456,7 +456,7 @@ class InputContextViewController : GenericViewController<InputContextView>, Tabl
                     _ = chatInteraction.appendText(replacementText, selectedRange: textInputState.selectionRange.lowerBound - distance - atLength ..< textInputState.selectionRange.upperBound)
                 }
             } else if let selectedItem = selectedItem as? ContextStickerRowItem, let index = selectedItem.selectedIndex {
-                chatInteraction.sendAppFile(selectedItem.result.results[index].file, false, chatInteraction.presentation.effectiveInput.inputText)
+                chatInteraction.sendAppFile(selectedItem.result.results[index].file, false, chatInteraction.presentation.effectiveInput.inputText, false)
                 chatInteraction.clearInput()
             } else if let selectedItem = selectedItem as? ContextSearchMessageItem {
                 chatInteraction.focusMessageId(nil, selectedItem.message.id, .CenterEmpty)
@@ -626,7 +626,7 @@ class InputContextViewController : GenericViewController<InputContextView>, Tabl
     }
     
     func cleanup() {
-        mainWindow.removeAllHandlers(for: self)
+        context.window.removeAllHandlers(for: self)
     }
     
     deinit {
@@ -774,7 +774,7 @@ class InputContextHelper: NSObject {
                     messages.2(messages.1)
                 case let .contextRequestResult(peer, oldCollection):
                     if let oldCollection = oldCollection, let nextOffset = oldCollection.nextOffset {
-                        self.loadMoreDisposable.set((requestChatContextResults(account: context.account, botId: oldCollection.botId, peerId: self.chatInteraction.peerId, query: oldCollection.query, offset: nextOffset) |> delay(0.5, queue: Queue.mainQueue())).start(next: { [weak self] collection in
+                        self.loadMoreDisposable.set((context.engine.messages.requestChatContextResults(botId: oldCollection.botId, peerId: self.chatInteraction.peerId, query: oldCollection.query, offset: nextOffset) |> delay(0.5, queue: Queue.mainQueue())).start(next: { [weak self] collection in
                             guard let `self` = self else {return}
                             
                             if let collection = collection {
@@ -791,7 +791,6 @@ class InputContextHelper: NSObject {
                 break
             }
         }
-        
         entriesValue.set(entries(for: result, initialSize: initialSize.modify {$0}, chatInteraction: chatInteraction))
         
         let makeSignal = combineLatest(queue: prepareQueue, entriesValue.get(), appearanceSignal) |> map { entries, appearance -> (TableUpdateTransition,Bool, Bool) in
